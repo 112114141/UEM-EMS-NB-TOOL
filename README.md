@@ -1,4 +1,4 @@
-# 🎓 应急管理大学教务管理系统抢课工具 | UEM Course Grabbing Tool
+# 🎓 应急管理大学教务管理系统抢课工具 | University of Emergency Management Educational Administration System Course Grabbing Tool
 
 > 选课如打仗，手速定生死。本工具是你选课战场上的自动化武器。
 >
