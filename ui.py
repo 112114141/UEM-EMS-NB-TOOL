@@ -9,7 +9,7 @@ from grab_core import GrabCore
 class GrabUI:
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title('UEM-EMS-NB-TOOL')
+        self.root.title('UEM Course Grabbing Tool')
         self.root.geometry('640x580')
         self.root.resizable(False, False)
         self.core = None
