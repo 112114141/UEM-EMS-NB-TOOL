@@ -9,7 +9,7 @@ from grab_core import GrabCore
 class GrabUI:
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title('应急管理大学教务管理系统抢课工具')
+        self.root.title('UEM-EMS-NB-TOOL')
         self.root.geometry('640x580')
         self.root.resizable(False, False)
         self.core = None
@@ -19,7 +19,7 @@ class GrabUI:
 
     def _build_ui(self):
         tk.Label(
-            self.root, text='教务抢课工具',
+            self.root, text='应急管理大学教务管理系统抢课工具',
             font=('微软雅黑', 16, 'bold')
         ).pack(pady=8)
 
