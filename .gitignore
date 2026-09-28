@@ -5,4 +5,4 @@ dist/
 *.spec
 .codeartsdoer/
 .codegraph/
-*.exe
+*.exetest_local.py
