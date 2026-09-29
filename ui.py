@@ -3,7 +3,22 @@ from tkinter import ttk, scrolledtext, messagebox
 from datetime import datetime
 import threading
 import webbrowser
+import platform
 from grab_core import GrabCore
+
+
+def _font(size, bold=False, underline=False):
+    family = 'PingFang SC' if platform.system() == 'Darwin' else '微软雅黑'
+    style = []
+    if bold:
+        style.append('bold')
+    if underline:
+        style.append('underline')
+    return (family, size, ' '.join(style) if style else 'normal')
+
+
+def _mono_font(size):
+    return ('Menlo', size) if platform.system() == 'Darwin' else ('Consolas', size)
 
 
 class GrabUI:
@@ -20,7 +35,7 @@ class GrabUI:
     def _build_ui(self):
         tk.Label(
             self.root, text='应急管理大学教务管理系统抢课工具',
-            font=('微软雅黑', 16, 'bold')
+            font=_font(16, bold=True)
         ).pack(pady=8)
 
         input_frame = ttk.Frame(self.root)
@@ -48,7 +63,7 @@ class GrabUI:
         time_frame = ttk.Frame(input_frame)
         time_frame.grid(row=2, column=1, sticky='w', pady=4)
 
-        self.year_sb = ttk.Spinbox(time_frame, from_=2026, to=2030, width=5, justify='center', state='readonly')
+        self.year_sb = ttk.Spinbox(time_frame, from_=2024, to=2035, width=5, justify='center', state='readonly')
         self.year_sb.set('2026')
         self.year_sb.pack(side='left')
         ttk.Label(time_frame, text='-').pack(side='left')
@@ -96,11 +111,11 @@ class GrabUI:
         )
         self.stop_btn.pack(side='left', padx=20)
 
-        ttk.Label(self.root, text='日志:', font=('微软雅黑', 9)).pack(
+        ttk.Label(self.root, text='日志:', font=_font(9)).pack(
             anchor='w', padx=12
         )
         self.log_text = scrolledtext.ScrolledText(
-            self.root, width=85, height=20, font=('Consolas', 9),
+            self.root, width=85, height=20, font=_mono_font(9),
             state='disabled'
         )
         self.log_text.pack(fill='both', expand=True, padx=12, pady=4)
@@ -108,9 +123,9 @@ class GrabUI:
         watermark_frame = tk.Frame(self.root)
         watermark_frame.pack(side='right', padx=12)
         tk.Label(watermark_frame, text='made by ',
-                 font=('微软雅黑', 8), fg='gray').pack(side='left')
+                 font=_font(8), fg='gray').pack(side='left')
         link_label = tk.Label(watermark_frame, text='112114141',
-                 font=('微软雅黑', 8, 'underline'), fg='blue',
+                 font=_font(8, underline=True), fg='blue',
                  cursor='hand2')
         link_label.pack(side='left')
         link_label.bind('<Button-1>',

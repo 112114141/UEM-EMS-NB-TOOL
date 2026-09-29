@@ -187,17 +187,21 @@ class GrabCore:
 
     def _check_result(self, resp):
         text = resp.text
+        low = text.lower()
         if any(kw in text for kw in
-               ['成功', 'success', 'Success', 'true', 'True',
-                '"code":1', '"status":"ok"']):
+               ['成功', '"code":1', '"code": 1', '"status":"ok"', '"status": "ok"']):
+            return True, '选课成功'
+        if any(kw in low for kw in
+               ['"success":true', '"result":true', '"code":1', '"status":"ok"']):
             return True, '选课成功'
         if any(kw in text for kw in
-               ['已满', 'full', 'Full', '容量', '人数已满', '已选满']):
+               ['已满', '容量', '人数已满', '已选满']):
             return False, '课程已满'
-        if any(kw in text for kw in
-               ['失败', 'fail', 'Fail', 'error', 'Error']):
+        if any(kw in low for kw in ['full', '已满']):
+            return False, '课程已满'
+        if any(kw in low for kw in ['失败', 'fail', 'error']):
             return False, '选课失败'
-        if 'login' in text.lower() or 'Login.aspx' in text:
+        if 'login' in low or 'login.aspx' in low:
             return False, 'Cookie过期'
         return False, text[:100]
 
@@ -307,7 +311,8 @@ class GrabCore:
                             self.log(f'秒抢命中: {msg}')
                             return True
                 except Exception:
-                    pass
+                    for f in futures:
+                        f.cancel()
 
                 fail_count += 5
                 if fail_count % 50 == 0:
