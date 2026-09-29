@@ -34,6 +34,17 @@ This software is for development testing and technical exchange only. There is n
 
 For technical exchange, contact the author: **18845329616**
 
+### 💾 下载 | Download
+
+去 [Releases](https://github.com/112114141/UEM-EMS-NB-TOOL/releases) 页面下载对应平台版本：
+
+Go to the [Releases](https://github.com/112114141/UEM-EMS-NB-TOOL/releases) page and download the version for your platform:
+
+| 平台 / Platform | 文件 / File | 说明 / Note |
+|---|---|---|
+| Windows | `NB-TOOL.exe` | 双击运行 / Double-click to run |
+| macOS | `NB-TOOL-mac` | 需先执行 `chmod +x NB-TOOL-mac` 再运行 / Run `chmod +x NB-TOOL-mac` first |
+
 ## ⚙️ 抢课策略 | Strategy
 
 ```
@@ -60,6 +71,20 @@ For technical exchange, contact the author: **18845329616**
 - Python + requests（纯接口调用，不装浏览器）/ Pure API calls, no browser
 - tkinter（UI，Python 自带）/ UI, bundled with Python
 - PyInstaller（打包成单 exe）/ Packaged into a single exe
+
+## 🔧 从源码运行 | Run from source
+
+不想下载打包版？可以直接跑源码（适合 Mac 用户或想改代码的同学）：
+
+Don't want the packaged version? Run directly from source (suitable for Mac users or those who want to tweak the code):
+
+```bash
+# 1. 装 Python 3.10+ / Install Python 3.10+
+# 2. 装依赖 / Install dependencies
+pip install requests PyYAML
+# 3. 运行 / Run
+python main.py
+```
 
 ## 📝 待完善 | TODO
 

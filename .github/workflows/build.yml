@@ -1,0 +1,31 @@
+name: Build Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: NB-TOOL.exe
+          - os: macos-latest
+            artifact: NB-TOOL-mac
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install requests PyYAML pyinstaller
+      - run: pyinstaller --onefile --windowed --name "${{ matrix.artifact }}" main.py
+      - name: Upload to Release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          file: dist/${{ matrix.artifact }}
+          tag: ${{ github.ref_name }}
+          overwrite: true
