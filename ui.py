@@ -200,7 +200,7 @@ class GrabUI:
         self.log_text.config(state='disabled')
 
     def start_grab(self):
-        cookie = self.cookie_text.get('1.0', 'end-1c').strip()
+        cookie = self.cookie_text.get('1.0', 'end-1c').strip().replace('\n', '').replace('\r', '')
         keyword = self.course_entry.get().strip()
         time_str = f'{self.year_sb.get()}-{self.month_sb.get()}-{self.day_sb.get()} {self.hour_sb.get()}:{self.min_sb.get()}:{self.sec_sb.get()}'
         advance_str = self.advance_entry.get().strip()

@@ -313,6 +313,7 @@ class GrabCore:
                 except Exception:
                     for f in futures:
                         f.cancel()
+                    self.log('⚠ 本轮提交超时，已跳过')
 
                 fail_count += 5
                 if fail_count % 50 == 0:
