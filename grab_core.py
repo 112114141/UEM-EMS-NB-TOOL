@@ -22,6 +22,8 @@ class GrabCore:
         self.select_url = None
         self.query_url = None
         self.target_course = None
+        self.lubn = None
+        self.select_type = None
         self._log = log_func or print
 
     def log(self, msg):
@@ -56,31 +58,102 @@ class GrabCore:
         except Exception:
             return False
 
+    def _start_select(self):
+        url = self.base_url + '/Student/CourseSelection/CourseSelectionHandler.ashx?action=startSelect'
+        try:
+            resp = self.session.post(url, timeout=5)
+        except Exception:
+            return {'status': 'error', 'message': '请求失败'}
+        data = resp.text.strip()
+        result = {'status': 'unknown', 'message': data, 'lubn': None, 'type': None}
+        if data == 'logintimeout' or data == 'nopermission':
+            result['status'] = 'auth_error'
+            result['message'] = 'Cookie过期或无权限'
+        elif data == '-20':
+            result['status'] = 'paused'
+            result['message'] = '选课已暂停'
+        elif data == '-1':
+            result['status'] = 'not_started'
+            result['message'] = '选课尚未开始'
+        elif data.startswith('-1,'):
+            result['status'] = 'not_started'
+            seconds = data.replace('-1,', '')
+            result['message'] = f'选课尚未开始（倒计时{seconds}秒）'
+        elif data == '-2':
+            result['status'] = 'ended'
+            result['message'] = '选课已结束'
+        elif data == '-5':
+            result['status'] = 'lottery'
+            result['message'] = '抽签阶段'
+        elif data == '-9':
+            result['status'] = 'no_need'
+            result['message'] = '无需选课'
+        elif data == '-99':
+            result['status'] = 'need_register'
+            result['message'] = '请先注册再选课'
+        elif data == '-3':
+            result['status'] = 'no_page'
+            result['message'] = '未找到选课页面'
+        elif '@' in data:
+            parts = data.split('@')
+            result['status'] = 'success'
+            result['lubn'] = parts[0]
+            result['type'] = parts[1] if len(parts) > 1 else ''
+            result['message'] = f'选课已开放（lubn={parts[0]}, type={result["type"]}）'
+        return result
+
     def detect_apis(self):
-        paths = [
-            '/xsxk/xsxk_index.aspx',
-            '/xsxk/xsxk.aspx',
-            '/xsxk/xsxk.aspx?from=menu',
-        ]
-        for path in paths:
-            try:
-                resp = self.session.get(
-                    self.base_url + path, timeout=5, allow_redirects=True
-                )
-                if resp.status_code == 200 and 'Login.aspx' not in resp.url:
-                    self._parse_page(resp.text)
-                    if self.select_url or self.query_url:
-                        return True
-            except Exception:
-                pass
+        start_result = self._start_select()
+        status = start_result['status']
+        msg = start_result['message']
+        if status == 'auth_error':
+            self.log(f'✗ {msg}')
+            return False
+        elif status == 'success':
+            self.lubn = start_result['lubn']
+            self.select_type = start_result['type']
+            self.log(f'✓ {msg}')
+            if self._extract_apis_from_page(self.lubn, self.select_type):
+                return True
+            self.log('⚠ 未能从选课页面提取接口，使用默认路径')
+            self._set_default_apis()
+            return True
+        elif status in ('not_started', 'paused'):
+            self.log(f'⚠ {msg}，将使用默认接口路径，选课开放后自动适配')
+            self._set_default_apis()
+            return True
+        else:
+            self.log(f'⚠ {msg}')
+            self._set_default_apis()
+            return True
+
+    def _set_default_apis(self):
+        base = self.base_url + '/Student/CourseSelection/CourseSelectionHandler.ashx'
+        self.query_url = base + '?action=queryCourse'
+        self.select_url = base + '?action=submitSelect'
+
+    def _extract_apis_from_page(self, lubn, type_):
+        if type_ == '1':
+            page_path = f'/CourseSelectHtml/{lubn}/all.html'
+        else:
+            page_path = f'/CourseSelectHtml/{lubn}/all_FormalSelecting.html'
+        try:
+            resp = self.session.get(self.base_url + page_path, timeout=5)
+            if resp.status_code == 200 and 'Login.aspx' not in resp.url:
+                self._parse_page(resp.text)
+                if self.select_url or self.query_url:
+                    return True
+        except Exception:
+            pass
         return False
 
     def _parse_page(self, html):
         query_patterns = [
-            r"['\"]([^'\"]*\.ashx[^'\"]*(?:method=|type=)?"
-            r"(?:Query|GetCourse|GetList|Search|LoadData|BindData)[^'\"]*)['\"]",
-            r"url\s*[:=]\s*['\"]([^'\"]*xsxk[^'\"]*\.ashx[^'\"]*)['\"]",
-            r"['\"]([^'\"]*xsxk[^'\"]*\.ashx[^'\"]*method=query[^'\"]*)['\"]",
+            r"['\"]([^'\"]*\.ashx[^'\"]*(?:action=|method=)?"
+            r"(?:query|Query|getCourse|GetCourse|getData|GetData|"
+            r"getKc|GetKc|search|Search|loadData|LoadData|bindData)[^'\"]*)['\"]",
+            r"url\s*[:=]\s*['\"]([^'\"]*CourseSelection[^'\"]*\.ashx[^'\"]*)['\"]",
+            r"['\"]([^'\"]*CourseSelection[^'\"]*\.ashx[^'\"]*action=query[^'\"]*)['\"]",
         ]
         for p in query_patterns:
             m = re.search(p, html, re.I)
@@ -89,9 +162,10 @@ class GrabCore:
                 break
 
         select_patterns = [
-            r"['\"]([^'\"]*\.ashx[^'\"]*(?:method=|type=)?"
-            r"(?:Select|Save|Submit|Xk|Choose|Add|XuanKe)[^'\"]*)['\"]",
-            r"['\"]([^'\"]*xsxk[^'\"]*\.ashx[^'\"]*method=select[^'\"]*)['\"]",
+            r"['\"]([^'\"]*\.ashx[^'\"]*(?:action=|method=)?"
+            r"(?:submit|Submit|save|Save|select|Select|xk|Xk|"
+            r"choose|Choose|add|Add|xuanKe|XuanKe)[^'\"]*)['\"]",
+            r"['\"]([^'\"]*CourseSelection[^'\"]*\.ashx[^'\"]*action=submit[^'\"]*)['\"]",
         ]
         for p in select_patterns:
             m = re.search(p, html, re.I)
@@ -110,7 +184,10 @@ class GrabCore:
         if not self.query_url:
             return None
         try:
-            resp = self.session.post(self.query_url, timeout=5)
+            params = {}
+            if self.lubn:
+                params['lubn'] = self.lubn
+            resp = self.session.post(self.query_url, data=params, timeout=5)
             courses = self._extract_courses(resp)
             for c in courses:
                 if keyword in c.get('name', ''):
@@ -138,7 +215,8 @@ class GrabCore:
 
         items = None
         if isinstance(data, dict):
-            for k in ['data', 'Data', 'rows', 'list', 'result', 'Rows', 'datas']:
+            for k in ['data', 'Data', 'rows', 'list', 'result',
+                      'Rows', 'datas', 'kcList', 'courseList']:
                 if k in data and isinstance(data[k], list):
                     items = data[k]
                     break
@@ -153,14 +231,14 @@ class GrabCore:
 
     def _parse_course(self, item):
         name = ''
-        for k in ['kcmc', 'courseName', 'KCMC', 'name', 'Name', 'kcmc']:
+        for k in ['kcmc', 'courseName', 'KCMC', 'name', 'Name', 'kcmc', 'Kkcmc']:
             if k in item and item[k]:
                 name = str(item[k])
                 break
 
         remaining = 0
         for k in ['kxrs', 'remaining', 'yxrs', 'KxRs', 'YxRs',
-                   'remain', 'Remain', 'surplus', 'kyrs']:
+                   'remain', 'Remain', 'surplus', 'kyrs', 'KyRs']:
             if k in item:
                 try:
                     remaining = int(item[k])
@@ -175,9 +253,12 @@ class GrabCore:
             return False, '未找到选课接口'
         try:
             params = {}
+            if self.lubn:
+                params['lubn'] = self.lubn
             raw = course.get('raw', {}) if course else {}
-            for k in ['id', 'kcid', 'courseId', 'kcbh',
-                       'Id', 'ID', 'KCID', 'xkxxid', 'do_jh_id']:
+            for k in ['id', 'kcid', 'courseId', 'kcbh', 'kcId', 'KcId',
+                       'Id', 'ID', 'KCID', 'xkxxid', 'do_jh_id',
+                       'kcbm', 'Kcbm', 'courseCode']:
                 if k in raw:
                     params[k] = raw[k]
             resp = self.session.post(self.select_url, data=params, timeout=3)
@@ -186,7 +267,7 @@ class GrabCore:
             return False, str(e)
 
     def _check_result(self, resp):
-        text = resp.text
+        text = resp.text.strip()
         low = text.lower()
         if any(kw in text for kw in
                ['成功', '"code":1', '"code": 1', '"status":"ok"', '"status": "ok"']):
@@ -194,15 +275,19 @@ class GrabCore:
         if any(kw in low for kw in
                ['"success":true', '"result":true', '"code":1', '"status":"ok"']):
             return True, '选课成功'
+        if text == '1' or text == 'true':
+            return True, '选课成功'
         if any(kw in text for kw in
-               ['已满', '容量', '人数已满', '已选满']):
-            return False, '课程已满'
+               ['已满', '容量', '人数已满', '已选满', '已选该课']):
+            return False, '课程已满或已选'
         if any(kw in low for kw in ['full', '已满']):
             return False, '课程已满'
         if any(kw in low for kw in ['失败', 'fail', 'error']):
             return False, '选课失败'
-        if 'login' in low or 'login.aspx' in low:
+        if 'login' in low or 'login.aspx' in low or 'logintimeout' in low:
             return False, 'Cookie过期'
+        if text in ('-20', '-1', '-2', '-5', '-9'):
+            return False, f'选课状态异常: {text}'
         return False, text[:100]
 
     def run(self, open_time, advance_seconds, keyword, stop_check):
@@ -222,25 +307,22 @@ class GrabCore:
         self.log('✓ Cookie 有效')
 
         self.log('正在探测选课接口...')
-        if self.detect_apis():
-            self.log('✓ 接口探测成功')
-            if self.query_url:
-                self.log(f'  查询接口: {self.query_url}')
-            if self.select_url:
-                self.log(f'  选课接口: {self.select_url}')
-        else:
-            self.log('✗ 接口自动探测失败')
-            self.log('  教务系统可能尚未开放选课，或接口路径非标准正方格式')
-            self.log('  请等教务系统更新后用 Cookie 测试验证')
-            return False
+        self.detect_apis()
+        if self.query_url:
+            self.log(f'  查询接口: {self.query_url}')
+        if self.select_url:
+            self.log(f'  选课接口: {self.select_url}')
 
         self.log(f'目标课程关键词: {keyword}')
-        course = self.find_course(keyword)
-        if course:
-            self.log(f'✓ 已定位课程: {course["name"]}，当前余量: {course["remaining"]}')
-            self.target_course = course
+        if self.lubn:
+            course = self.find_course(keyword)
+            if course:
+                self.log(f'✓ 已定位课程: {course["name"]}，当前余量: {course["remaining"]}')
+                self.target_course = course
+            else:
+                self.log(f'⚠ 暂未找到包含"{keyword}"的课程，将在抢课时持续尝试')
         else:
-            self.log(f'⚠ 暂未找到包含"{keyword}"的课程，将在抢课时持续尝试')
+            self.log('⚠ 选课尚未开放，无法预查课程，将在抢课时自动适配')
 
         start_time = open_time - timedelta(seconds=advance_seconds)
         self.log(f'计划开始时间: {start_time.strftime("%Y-%m-%d %H:%M:%S")}（提前 {advance_seconds} 秒）')
@@ -263,6 +345,14 @@ class GrabCore:
         if stop_check():
             self.log('已停止')
             return False
+
+        if not self.lubn:
+            self.log('>>> 选课即将开放，重新探测接口...')
+            self.detect_apis()
+            if self.query_url:
+                self.log(f'  查询接口: {self.query_url}')
+            if self.select_url:
+                self.log(f'  选课接口: {self.select_url}')
 
         self.log('>>> 开始秒抢！')
         success = self._rush(keyword, stop_check)
