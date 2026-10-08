@@ -140,12 +140,16 @@ class GrabCore:
         return False
 
     def _parse_page(self, html):
-        m = re.search(r"['\"]([^'\"]*CourseSelection[^'\"]*\.ashx[^'\"]*action=query[^'\"]*)['\"]", html, re.I)
-        if m:
-            self.query_url = self._fix_url(m.group(1))
-        m = re.search(r"['\"]([^'\"]*CourseSelection[^'\"]*\.ashx[^'\"]*action=submit[^'\"]*)['\"]", html, re.I)
-        if m:
-            self.select_url = self._fix_url(m.group(1))
+        urls = re.findall(r"['\"]([^'\"]*\.ashx[^'\"]*action=\w+[^'\"]*)['\"]", html, re.I)
+        for u in urls:
+            action = re.search(r'action=(\w+)', u, re.I)
+            if not action:
+                continue
+            act = action.group(1).lower()
+            if not self.query_url and any(k in act for k in ['query', 'get', 'load', 'search', 'list']):
+                self.query_url = self._fix_url(u)
+            elif not self.select_url and any(k in act for k in ['submit', 'save', 'select', 'xk', 'add']):
+                self.select_url = self._fix_url(u)
 
     def _fix_url(self, url):
         if url.startswith('http'):
