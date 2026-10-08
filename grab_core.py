@@ -103,29 +103,21 @@ class GrabCore:
         return result
 
     def detect_apis(self):
-        start_result = self._start_select()
-        status = start_result['status']
-        msg = start_result['message']
-        if status == 'auth_error':
-            self.log(f'✗ {msg}')
+        r = self._start_select()
+        if r['status'] == 'auth_error':
+            self.log(f'✗ {r["message"]}')
             return False
-        elif status == 'success':
-            self.lubn = start_result['lubn']
-            self.select_type = start_result['type']
-            self.log(f'✓ {msg}')
+        if r['status'] == 'success':
+            self.lubn = r['lubn']
+            self.select_type = r['type']
+            self.log(f'✓ {r["message"]}')
             if self._extract_apis_from_page(self.lubn, self.select_type):
                 return True
             self.log('⚠ 未能从选课页面提取接口，使用默认路径')
-            self._set_default_apis()
-            return True
-        elif status in ('not_started', 'paused'):
-            self.log(f'⚠ {msg}，将使用默认接口路径，选课开放后自动适配')
-            self._set_default_apis()
-            return True
         else:
-            self.log(f'⚠ {msg}')
-            self._set_default_apis()
-            return True
+            self.log(f'⚠ {r["message"]}，将使用默认接口路径，选课开放后自动适配')
+        self._set_default_apis()
+        return True
 
     def _set_default_apis(self):
         base = self.base_url + '/Student/CourseSelection/CourseSelectionHandler.ashx'
@@ -148,30 +140,12 @@ class GrabCore:
         return False
 
     def _parse_page(self, html):
-        query_patterns = [
-            r"['\"]([^'\"]*\.ashx[^'\"]*(?:action=|method=)?"
-            r"(?:query|Query|getCourse|GetCourse|getData|GetData|"
-            r"getKc|GetKc|search|Search|loadData|LoadData|bindData)[^'\"]*)['\"]",
-            r"url\s*[:=]\s*['\"]([^'\"]*CourseSelection[^'\"]*\.ashx[^'\"]*)['\"]",
-            r"['\"]([^'\"]*CourseSelection[^'\"]*\.ashx[^'\"]*action=query[^'\"]*)['\"]",
-        ]
-        for p in query_patterns:
-            m = re.search(p, html, re.I)
-            if m:
-                self.query_url = self._fix_url(m.group(1))
-                break
-
-        select_patterns = [
-            r"['\"]([^'\"]*\.ashx[^'\"]*(?:action=|method=)?"
-            r"(?:submit|Submit|save|Save|select|Select|xk|Xk|"
-            r"choose|Choose|add|Add|xuanKe|XuanKe)[^'\"]*)['\"]",
-            r"['\"]([^'\"]*CourseSelection[^'\"]*\.ashx[^'\"]*action=submit[^'\"]*)['\"]",
-        ]
-        for p in select_patterns:
-            m = re.search(p, html, re.I)
-            if m:
-                self.select_url = self._fix_url(m.group(1))
-                break
+        m = re.search(r"['\"]([^'\"]*CourseSelection[^'\"]*\.ashx[^'\"]*action=query[^'\"]*)['\"]", html, re.I)
+        if m:
+            self.query_url = self._fix_url(m.group(1))
+        m = re.search(r"['\"]([^'\"]*CourseSelection[^'\"]*\.ashx[^'\"]*action=submit[^'\"]*)['\"]", html, re.I)
+        if m:
+            self.select_url = self._fix_url(m.group(1))
 
     def _fix_url(self, url):
         if url.startswith('http'):
@@ -215,8 +189,7 @@ class GrabCore:
 
         items = None
         if isinstance(data, dict):
-            for k in ['data', 'Data', 'rows', 'list', 'result',
-                      'Rows', 'datas', 'kcList', 'courseList']:
+            for k in ['data', 'rows', 'list', 'result', 'kcList']:
                 if k in data and isinstance(data[k], list):
                     items = data[k]
                     break
@@ -231,14 +204,13 @@ class GrabCore:
 
     def _parse_course(self, item):
         name = ''
-        for k in ['kcmc', 'courseName', 'KCMC', 'name', 'Name', 'kcmc', 'Kkcmc']:
+        for k in ['kcmc', 'courseName', 'KCMC', 'name', 'Name']:
             if k in item and item[k]:
                 name = str(item[k])
                 break
 
         remaining = 0
-        for k in ['kxrs', 'remaining', 'yxrs', 'KxRs', 'YxRs',
-                   'remain', 'Remain', 'surplus', 'kyrs', 'KyRs']:
+        for k in ['kxrs', 'remaining', 'yxrs', 'kyrs', 'surplus']:
             if k in item:
                 try:
                     remaining = int(item[k])
@@ -256,9 +228,7 @@ class GrabCore:
             if self.lubn:
                 params['lubn'] = self.lubn
             raw = course.get('raw', {}) if course else {}
-            for k in ['id', 'kcid', 'courseId', 'kcbh', 'kcId', 'KcId',
-                       'Id', 'ID', 'KCID', 'xkxxid', 'do_jh_id',
-                       'kcbm', 'Kcbm', 'courseCode']:
+            for k in ['id', 'kcid', 'courseId', 'kcbh', 'xkxxid', 'do_jh_id']:
                 if k in raw:
                     params[k] = raw[k]
             resp = self.session.post(self.select_url, data=params, timeout=3)
@@ -269,22 +239,14 @@ class GrabCore:
     def _check_result(self, resp):
         text = resp.text.strip()
         low = text.lower()
-        if any(kw in text for kw in
-               ['成功', '"code":1', '"code": 1', '"status":"ok"', '"status": "ok"']):
+        if '成功' in text or low in ('1', 'true') or any(
+            kw in low for kw in ['"success":true', '"code":1', '"status":"ok"', '"result":true']):
             return True, '选课成功'
-        if any(kw in low for kw in
-               ['"success":true', '"result":true', '"code":1', '"status":"ok"']):
-            return True, '选课成功'
-        if text == '1' or text == 'true':
-            return True, '选课成功'
-        if any(kw in text for kw in
-               ['已满', '容量', '人数已满', '已选满', '已选该课']):
+        if any(kw in text for kw in ['已满', '容量', '已选']) or 'full' in low:
             return False, '课程已满或已选'
-        if any(kw in low for kw in ['full', '已满']):
-            return False, '课程已满'
         if any(kw in low for kw in ['失败', 'fail', 'error']):
             return False, '选课失败'
-        if 'login' in low or 'login.aspx' in low or 'logintimeout' in low:
+        if 'login' in low or 'logintimeout' in low:
             return False, 'Cookie过期'
         if text in ('-20', '-1', '-2', '-5', '-9'):
             return False, f'选课状态异常: {text}'
