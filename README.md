@@ -43,7 +43,7 @@ Go to the [Releases](https://github.com/112114141/UEM-EMS-NB-TOOL/releases) page
 | 平台 / Platform | 文件 / File | 说明 / Note |
 |---|---|---|
 | Windows | `NB-TOOL.exe` | 双击运行 / Double-click to run |
-| macOS | `NB-TOOL-mac` | 需先执行 `chmod +x NB-TOOL-mac` 再运行 / Run `chmod +x NB-TOOL-mac` first |
+| macOS | `NB-TOOL-mac.zip` | 解压后右键 .app → 打开 / Unzip, right-click .app → Open |
 
 ## ⚙️ 抢课策略 | Strategy
 
