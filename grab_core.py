@@ -24,6 +24,7 @@ class GrabCore:
         self.target_course = None
         self.lubn = None
         self.select_type = None
+        self.cstask_id = None
         self._log = log_func or print
 
     def log(self, msg):
@@ -66,19 +67,15 @@ class GrabCore:
             return {'status': 'error', 'message': '请求失败'}
         data = resp.text.strip()
         result = {'status': 'unknown', 'message': data, 'lubn': None, 'type': None}
-        if data == 'logintimeout' or data == 'nopermission':
+        if data in ('logintimeout', 'nopermission'):
             result['status'] = 'auth_error'
             result['message'] = 'Cookie过期或无权限'
         elif data == '-20':
             result['status'] = 'paused'
             result['message'] = '选课已暂停'
-        elif data == '-1':
+        elif data == '-1' or data.startswith('-1,'):
             result['status'] = 'not_started'
             result['message'] = '选课尚未开始'
-        elif data.startswith('-1,'):
-            result['status'] = 'not_started'
-            seconds = data.replace('-1,', '')
-            result['message'] = f'选课尚未开始（倒计时{seconds}秒）'
         elif data == '-2':
             result['status'] = 'ended'
             result['message'] = '选课已结束'
@@ -88,12 +85,6 @@ class GrabCore:
         elif data == '-9':
             result['status'] = 'no_need'
             result['message'] = '无需选课'
-        elif data == '-99':
-            result['status'] = 'need_register'
-            result['message'] = '请先注册再选课'
-        elif data == '-3':
-            result['status'] = 'no_page'
-            result['message'] = '未找到选课页面'
         elif '@' in data:
             parts = data.split('@')
             result['status'] = 'success'
@@ -121,8 +112,8 @@ class GrabCore:
 
     def _set_default_apis(self):
         base = self.base_url + '/Student/CourseSelection/CourseSelectionHandler.ashx'
-        self.query_url = base + '?action=queryCourse'
-        self.select_url = base + '?action=submitSelect'
+        self.query_url = base + '?action=SearchCourse'
+        self.select_url = base + '?action=Selecting&ron=' + str(random.random())
 
     def _extract_apis_from_page(self, lubn, type_):
         if type_ == '1':
@@ -131,25 +122,31 @@ class GrabCore:
             page_path = f'/CourseSelectHtml/{lubn}/all_FormalSelecting.html'
         try:
             resp = self.session.get(self.base_url + page_path, timeout=5)
-            if resp.status_code == 200 and 'Login.aspx' not in resp.url:
-                self._parse_page(resp.text)
-                if self.select_url or self.query_url:
+            if resp.status_code != 200 or 'Login.aspx' in resp.url:
+                return False
+            m = re.search(r'id="cstaskId"\s+value="(\d+)"', resp.text)
+            if m:
+                self.cstask_id = m.group(1)
+            js_url = self.base_url + '/Student/CourseSelection/FormalCourseSelect.js'
+            js_resp = self.session.get(js_url, timeout=5)
+            if js_resp.status_code == 200:
+                self._parse_js(js_resp.text)
+                if self.query_url and self.select_url:
                     return True
         except Exception:
             pass
         return False
 
-    def _parse_page(self, html):
-        urls = re.findall(r"['\"]([^'\"]*\.ashx[^'\"]*action=\w+[^'\"]*)['\"]", html, re.I)
-        for u in urls:
-            action = re.search(r'action=(\w+)', u, re.I)
-            if not action:
-                continue
-            act = action.group(1).lower()
-            if not self.query_url and any(k in act for k in ['query', 'get', 'load', 'search', 'list']):
-                self.query_url = self._fix_url(u)
-            elif not self.select_url and any(k in act for k in ['submit', 'save', 'select', 'xk', 'add']):
-                self.select_url = self._fix_url(u)
+    def _parse_js(self, js_text):
+        m = re.search(r"['\"]([^'\"]*action=SearchCourse[^'\"]*)['\"]", js_text)
+        if m:
+            self.query_url = self._fix_url(m.group(1))
+        m = re.search(r"['\"]([^'\"]*action=Selecting[^'\"]*)['\"]", js_text)
+        if m:
+            url = m.group(1)
+            if 'ron=' not in url:
+                url += '&ron=' + str(random.random())
+            self.select_url = self._fix_url(url)
 
     def _fix_url(self, url):
         if url.startswith('http'):
@@ -162,17 +159,31 @@ class GrabCore:
         if not self.query_url:
             return None
         try:
-            params = {}
-            if self.lubn:
-                params['lubn'] = self.lubn
+            params = {'type': '2', 'content': keyword}
+            if self.cstask_id:
+                params['cstaskId'] = self.cstask_id
             resp = self.session.post(self.query_url, data=params, timeout=5)
             courses = self._extract_courses(resp)
             for c in courses:
                 if keyword in c.get('name', ''):
                     return c
+            if courses:
+                return courses[0]
         except Exception:
             pass
         return None
+
+    def find_all_courses(self, keyword):
+        if not self.query_url:
+            return []
+        try:
+            params = {'type': '2', 'content': keyword}
+            if self.cstask_id:
+                params['cstaskId'] = self.cstask_id
+            resp = self.session.post(self.query_url, data=params, timeout=5)
+            return self._extract_courses(resp)
+        except Exception:
+            return []
 
     def _extract_courses(self, resp):
         courses = []
@@ -181,79 +192,71 @@ class GrabCore:
             data = resp.json()
         except Exception:
             text = resp.text
-            m = re.search(r'\{.*\}', text, re.S)
+            m = re.search(r'\[.*\]', text, re.S)
             if m:
                 try:
                     data = json.loads(m.group())
                 except Exception:
                     return []
-
-        if data is None:
-            return []
-
-        items = None
-        if isinstance(data, dict):
-            for k in ['data', 'rows', 'list', 'result', 'kcList']:
-                if k in data and isinstance(data[k], list):
-                    items = data[k]
-                    break
-        elif isinstance(data, list):
-            items = data
-
-        if items:
-            for item in items:
+        if isinstance(data, list):
+            for item in data:
                 if isinstance(item, dict):
                     courses.append(self._parse_course(item))
         return courses
 
     def _parse_course(self, item):
-        name = ''
-        for k in ['kcmc', 'courseName', 'KCMC', 'name', 'Name']:
-            if k in item and item[k]:
-                name = str(item[k])
-                break
-
-        remaining = 0
-        for k in ['kxrs', 'remaining', 'yxrs', 'kyrs', 'surplus']:
-            if k in item:
-                try:
-                    remaining = int(item[k])
-                except (ValueError, TypeError):
-                    pass
-                break
-
-        return {'name': name, 'remaining': remaining, 'raw': item}
+        name = item.get('courseName', '')
+        dcid = item.get('dcId', '')
+        course_id = item.get('courseId', '')
+        credit = item.get('credit', 0)
+        capacity = int(item.get('capacity', 0) or 0)
+        remaining = int(item.get('remaining', 0) or 0)
+        surplus = capacity - remaining
+        sn = item.get('sn', '')
+        assign = item.get('assign', '')
+        return {
+            'name': name, 'dcid': dcid, 'course_id': course_id,
+            'credit': credit, 'capacity': capacity, 'remaining': surplus,
+            'sn': sn, 'assign': assign, 'raw': item
+        }
 
     def submit_select(self, course):
         if not self.select_url:
             return False, '未找到选课接口'
         try:
-            params = {}
-            if self.lubn:
-                params['lubn'] = self.lubn
             raw = course.get('raw', {}) if course else {}
-            for k in ['id', 'kcid', 'courseId', 'kcbh', 'xkxxid', 'do_jh_id']:
-                if k in raw:
-                    params[k] = raw[k]
-            resp = self.session.post(self.select_url, data=params, timeout=3)
+            dcid = course.get('dcid', raw.get('dcId', ''))
+            lu_id = course.get('course_id', raw.get('courseId', ''))
+            credit = course.get('credit', raw.get('credit', 0))
+            params = {'dcid': dcid, 'luID': lu_id, 'credit': credit}
+            if self.cstask_id:
+                params['cstaskId'] = self.cstask_id
+            url = self.select_url
+            if 'ron=' not in url:
+                url += '&ron=' + str(random.random())
+            resp = self.session.post(url, data=params, timeout=3)
             return self._check_result(resp)
         except Exception as e:
             return False, str(e)
 
     def _check_result(self, resp):
         text = resp.text.strip()
-        low = text.lower()
-        if '成功' in text or low in ('1', 'true') or any(
-            kw in low for kw in ['"success":true', '"code":1', '"status":"ok"', '"result":true']):
-            return True, '选课成功'
-        if any(kw in text for kw in ['已满', '容量', '已选']) or 'full' in low:
-            return False, '课程已满或已选'
-        if any(kw in low for kw in ['失败', 'fail', 'error']):
-            return False, '选课失败'
-        if 'login' in low or 'logintimeout' in low:
+        if text in ('logintimeout', 'nopermission'):
             return False, 'Cookie过期'
-        if text in ('-20', '-1', '-2', '-5', '-9'):
-            return False, f'选课状态异常: {text}'
+        if not text or text.lstrip('-').isdigit():
+            return False, f'选课失败: {text}'
+        try:
+            data = json.loads(text)
+            state = str(data.get('state', ''))
+            if state == '9':
+                return True, '选课成功'
+            if state == '-8':
+                return False, '没有名额了'
+            if state == '-999':
+                return False, f'条件限制: {data.get("Name", "")}'
+            return False, f'选课失败: state={state}'
+        except Exception:
+            pass
         return False, text[:100]
 
     def run(self, open_time, advance_seconds, keyword, stop_check):
@@ -278,13 +281,24 @@ class GrabCore:
             self.log(f'  查询接口: {self.query_url}')
         if self.select_url:
             self.log(f'  选课接口: {self.select_url}')
+        if self.cstask_id:
+            self.log(f'  选课任务ID: {self.cstask_id}')
 
         self.log(f'目标课程关键词: {keyword}')
         if self.lubn:
-            course = self.find_course(keyword)
-            if course:
-                self.log(f'✓ 已定位课程: {course["name"]}，当前余量: {course["remaining"]}')
-                self.target_course = course
+            courses = self.find_all_courses(keyword)
+            if courses:
+                self.log(f'✓ 找到 {len(courses)} 个教学班:')
+                for c in courses:
+                    tag = '✓' if c['remaining'] > 0 else '✗'
+                    self.log(f'  {tag} {c["name"]} 班号{c["sn"]} 余量{c["remaining"]}/{c["capacity"]} dcid={c["dcid"]}')
+                target = next((c for c in courses if c['remaining'] > 0), None)
+                if target:
+                    self.target_course = target
+                    self.log(f'✓ 自动选择有余量的教学班: 班号{target["sn"]} 余量{target["remaining"]}')
+                else:
+                    self.target_course = courses[0]
+                    self.log(f'⚠ 所有班已满，将盯班号{courses[0]["sn"]}')
             else:
                 self.log(f'⚠ 暂未找到包含"{keyword}"的课程，将在抢课时持续尝试')
         else:
@@ -349,10 +363,13 @@ class GrabCore:
             while not stop_check():
                 course = self.target_course
                 if not course:
-                    course = self.find_course(keyword)
-                    if course:
-                        self.target_course = course
-                        self.log(f'定位到课程: {course["name"]}，余量: {course["remaining"]}')
+                    courses = self.find_all_courses(keyword)
+                    if courses:
+                        target = next((c for c in courses if c['remaining'] > 0), None)
+                        if target:
+                            self.target_course = target
+                            self.log(f'定位到教学班: {target["name"]} 班号{target["sn"]} 余量{target["remaining"]}')
+                            course = target
 
                 if not course:
                     time.sleep(0.5)
@@ -378,14 +395,13 @@ class GrabCore:
                 now = time.time()
                 if now - last_check_time >= 2:
                     last_check_time = now
-                    c = self.find_course(keyword)
-                    if c:
-                        self.target_course = c
-                        if c['remaining'] == 0:
-                            self.log('课余量为 0，秒抢窗口已过，转入捡漏')
-                            return False
+                    courses = self.find_all_courses(keyword)
+                    if courses:
+                        target = next((c for c in courses if c['remaining'] > 0), None)
+                        if target:
+                            self.target_course = target
                         elif fail_count % 50 == 0:
-                            self.log(f'余量 {c["remaining"]}，继续秒抢')
+                            self.log('所有班已满，继续秒抢')
 
                 time.sleep(0.05)
 
@@ -395,26 +411,22 @@ class GrabCore:
         attempt = 0
         while not stop_check():
             attempt += 1
-            course = self.find_course(keyword)
-            if course:
-                remaining = course['remaining']
-                if remaining > 0:
-                    self.log(f'[捡漏 #{attempt}] {course["name"]} 余量 {remaining}，立即提交！')
-                    success, msg = self.submit_select(course)
-                    if success:
-                        self.log(f'捡漏成功: {msg}')
-                        return True
-                    else:
-                        self.log(f'提交失败: {msg}')
-                        if 'Cookie过期' in msg:
-                            self.log('✗ Cookie 已过期，请重新登录更新 Cookie')
-                            return False
+            courses = self.find_all_courses(keyword)
+            target = next((c for c in courses if c['remaining'] > 0), None)
+            if target:
+                self.log(f'[捡漏 #{attempt}] {target["name"]} 班号{target["sn"]} 余量{target["remaining"]}，立即提交！')
+                success, msg = self.submit_select(target)
+                if success:
+                    self.log(f'捡漏成功: {msg}')
+                    return True
                 else:
-                    if attempt % 20 == 0:
-                        self.log(f'[捡漏 #{attempt}] {course["name"]} 已满，继续等待...')
+                    self.log(f'提交失败: {msg}')
+                    if 'Cookie过期' in msg:
+                        self.log('✗ Cookie 已过期，请重新登录更新 Cookie')
+                        return False
             else:
                 if attempt % 20 == 0:
-                    self.log(f'[捡漏 #{attempt}] 未找到课程，继续等待...')
+                    self.log(f'[捡漏 #{attempt}] 无有余量的教学班，继续等待...')
 
             time.sleep(1.5 + random.uniform(0, 0.5))
 
