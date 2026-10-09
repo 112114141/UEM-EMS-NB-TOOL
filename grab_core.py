@@ -9,7 +9,7 @@ from courses_data import BUILTIN_COURSES
 
 
 class GrabCore:
-    def __init__(self, cookie, base_url='https://jw.cidp.edu.cn', log_func=None):
+    def __init__(self, cookie, base_url='https://jw.cidp.edu.cn', log_func=None, update_func=None):
         self.base_url = base_url
         self.session = requests.Session()
         self.session.headers['Cookie'] = cookie.strip().replace('\n', '').replace('\r', '').replace('\t', '')
@@ -28,6 +28,7 @@ class GrabCore:
         self.page_html = None
         self.select_page_path = None
         self._log = log_func or print
+        self._update = update_func or (lambda courses: None)
 
     def log(self, msg):
         ts = datetime.now().strftime('%H:%M:%S.%f')[:-3]
@@ -442,6 +443,8 @@ class GrabCore:
                 if success:
                     self.log(f'✅ 秒抢命中: {c["name"]} 班号{c["sn"]} → {msg}')
                     return True
+                else:
+                    self.log(f'  ✗ {c["name"]} 班号{c["sn"]} → {msg}')
                 if '-555' in msg:
                     got_555 = True
                 if '没有名额' in msg or '-8' in msg:
@@ -461,10 +464,20 @@ class GrabCore:
                 self.log(f'⚠ 操作过快(-555)，减速至 {delay:.2f}秒/轮')
             elif round_count % 10 == 0 and delay > 0.1:
                 delay = max(delay * 0.8, 0.1)
-                self.log(f'✓ 连续10轮无-555，恢复至 {delay:.2f}秒/轮')
 
-            if round_count % 20 == 0:
-                self.log(f'秒抢第{round_count}轮，已提交{fail_count}次，间隔{delay:.2f}秒')
+            if round_count % 5 == 0 and self.lubn:
+                fresh = self.find_all_courses()
+                if fresh:
+                    fresh_map = {c['dcid']: c for c in fresh}
+                    for c in self.primary_courses + self.backup_courses:
+                        if c['dcid'] in fresh_map:
+                            c['remaining'] = fresh_map[c['dcid']]['remaining']
+                    self._update(self.primary_courses + self.backup_courses)
+                    remain_info = [f'{c["name"]}班{c["sn"]}:{c["remaining"]}' for c in courses if c['dcid'] in fresh_map]
+                    if remain_info:
+                        self.log(f'📊 余量: {", ".join(remain_info)}')
+
+            self.log(f'第{round_count}轮 已提交{fail_count}次 间隔{delay:.2f}秒')
 
             time.sleep(delay)
 

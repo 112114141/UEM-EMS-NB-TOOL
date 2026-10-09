@@ -414,13 +414,25 @@ class GrabUI:
         self.status_var.set('初始化中...')
         self.clear_log()
 
-        self.core = GrabCore(cookie, log_func=self.log)
+        self.core = GrabCore(cookie, log_func=self.log, update_func=self._update_courses)
         self.grab_thread = threading.Thread(
             target=self._run_grab,
             args=(open_time, advance, class_name, primary, backup),
             daemon=True
         )
         self.grab_thread.start()
+
+    def _update_courses(self, courses):
+        def do_update():
+            dcid_map = {c['dcid']: c['remaining'] for c in courses}
+            items = self.course_tree.get_children()
+            for i, cd in enumerate(self.course_data):
+                if cd['dcid'] in dcid_map and i < len(items):
+                    cd['remaining'] = dcid_map[cd['dcid']]
+                    vals = list(self.course_tree.item(items[i], 'values'))
+                    vals[4] = cd['remaining'] if cd['remaining'] >= 0 else '?'
+                    self.course_tree.item(items[i], values=vals)
+        self.root.after(0, do_update)
 
     def _run_grab(self, open_time, advance, class_name, primary, backup):
         try:
