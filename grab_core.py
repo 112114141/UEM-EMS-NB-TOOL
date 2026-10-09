@@ -264,7 +264,7 @@ class GrabCore:
             pass
         return False, text[:100]
 
-    def run(self, open_time, advance_seconds, target_courses, stop_check):
+    def run(self, open_time, advance_seconds, class_name, stop_check):
         self.log('=== 抢课脚本启动 ===')
 
         self.log('正在校准服务器时间...')
@@ -287,11 +287,7 @@ class GrabCore:
         if self.cstask_id:
             self.log(f'  选课任务ID: {self.cstask_id}')
 
-        self.target_courses = target_courses
-        self.log(f'目标教学班: {len(target_courses)} 个')
-        for c in target_courses:
-            tag = '✓' if c['remaining'] > 0 else '✗'
-            self.log(f'  {tag} {c["name"]} 班号{c["sn"]} 余量{c["remaining"]}/{c["capacity"]} dcid={c["dcid"]}')
+        self.log(f'目标班级: {class_name}')
 
         start_time = open_time - timedelta(seconds=advance_seconds)
         self.log(f'计划开始时间: {start_time.strftime("%Y-%m-%d %H:%M:%S")}（提前 {advance_seconds} 秒）')
@@ -320,6 +316,27 @@ class GrabCore:
             self.detect_apis()
             if self.select_url:
                 self.log(f'  选课接口: {self.select_url}')
+
+        self.log(f'>>> 拉取 [{class_name}] 可选课程...')
+        courses = self.find_courses_for_class(class_name)
+        if not courses:
+            self.log('⚠ 未找到可选课程，将持续尝试...')
+            for _ in range(10):
+                if stop_check():
+                    return False
+                time.sleep(1)
+                courses = self.find_courses_for_class(class_name)
+                if courses:
+                    break
+        if not courses:
+            self.log('✗ 仍未找到可选课程，退出')
+            return False
+
+        self.target_courses = courses
+        self.log(f'✓ 找到 {len(courses)} 个教学班:')
+        for c in courses:
+            tag = '✓' if c['remaining'] > 0 else '✗'
+            self.log(f'  {tag} {c["name"]} 班号{c["sn"]} 余量{c["remaining"]}/{c["capacity"]}')
 
         self.log('>>> 开始秒抢！')
         success = self._rush(stop_check)
