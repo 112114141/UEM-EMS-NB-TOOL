@@ -253,7 +253,7 @@ class GrabCore:
                 continue
             courses.append({
                 'name': name, 'sn': sn, 'assign': assign,
-                'credit': credit, 'capacity': cap, 'remaining': cap - sel,
+                'credit': credit, 'capacity': cap, 'remaining': cap - sel, 'selected': sel,
                 'dcid': dcid, 'course_id': luid, 'classes': classes, 'raw': {}
             })
         return courses
@@ -302,17 +302,21 @@ class GrabCore:
             return False, '时间冲突(-3)'
         if text == '-8':
             return False, '没有名额了'
+        if text == '1':
+            return True, '选课成功'
         if not text or text.lstrip('-').isdigit():
             return False, f'选课失败: {text}'
         try:
             data = json.loads(text)
             state = str(data.get('state', ''))
-            if state == '9':
+            if state in ('9', '1'):
                 return True, '选课成功'
             if state == '-8':
                 return False, '没有名额了'
             if state == '-999':
                 return False, f'条件限制: {data.get("Name", "")}'
+            if data.get('success') is True or data.get('result') in (1, '1', True):
+                return True, '选课成功'
             return False, f'选课失败: state={state}'
         except Exception:
             pass
@@ -473,9 +477,9 @@ class GrabCore:
                         if c['dcid'] in fresh_map:
                             c['remaining'] = fresh_map[c['dcid']]['remaining']
                     self._update(self.primary_courses + self.backup_courses)
-                    remain_info = [f'{c["name"]}班{c["sn"]}:{c["remaining"]}' for c in courses if c['dcid'] in fresh_map]
+                    remain_info = [f'{c["name"]}班{c["sn"]}:{c["remaining"]}/{c["capacity"]}' for c in courses if c['dcid'] in fresh_map]
                     if remain_info:
-                        self.log(f'📊 余量: {", ".join(remain_info)}')
+                        self.log(f'📊 余量/容量: {", ".join(remain_info)}')
 
             self.log(f'第{round_count}轮 已提交{fail_count}次 间隔{delay:.2f}秒')
 
@@ -502,7 +506,7 @@ class GrabCore:
                 if stop_check():
                     return False
                 if c['remaining'] > 0:
-                    self.log(f'[捡漏 #{attempt}] [主] {c["name"]} 班号{c["sn"]} 余量{c["remaining"]}，立即提交！')
+                    self.log(f'[捡漏 #{attempt}] [主] {c["name"]} 班号{c["sn"]} 余量{c["remaining"]}/{c["capacity"]}，立即提交！')
                     success, msg = self.submit_select(c)
                     if success:
                         self.log(f'捡漏成功: {msg}')
@@ -520,7 +524,7 @@ class GrabCore:
                 if stop_check():
                     return False
                 if c['remaining'] > 0:
-                    self.log(f'[捡漏 #{attempt}] [备] {c["name"]} 班号{c["sn"]} 余量{c["remaining"]}，立即提交！')
+                    self.log(f'[捡漏 #{attempt}] [备] {c["name"]} 班号{c["sn"]} 余量{c["remaining"]}/{c["capacity"]}，立即提交！')
                     success, msg = self.submit_select(c)
                     if success:
                         self.log(f'捡漏成功: {msg}')
