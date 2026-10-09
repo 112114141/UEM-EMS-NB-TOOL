@@ -51,6 +51,9 @@ class GrabCore:
 
     def check_cookie(self):
         try:
+            r = self._start_select()
+            if r['status'] == 'auth_error':
+                return False
             resp = self.session.get(
                 self.base_url + '/Navigation/Default.htm?v=5',
                 timeout=5, allow_redirects=True
