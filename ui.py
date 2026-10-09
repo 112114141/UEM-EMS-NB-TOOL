@@ -209,6 +209,8 @@ class GrabUI:
         link_label.pack(side='left')
         link_label.bind('<Button-1>',
             lambda e: webbrowser.open('https://github.com/112114141'))
+        tk.Label(watermark_frame, text='[左晟宇] with ❤️',
+                 font=_font(8), fg='gray').pack(side='left')
 
     def _refresh_course_list(self):
         class_name = self.class_entry.get().strip()

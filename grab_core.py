@@ -21,7 +21,7 @@ class GrabCore:
         self.time_offset = 0.0
         self.select_url = None
         self.query_url = None
-        self.target_courses = []
+
         self.lubn = None
         self.select_type = None
         self.cstask_id = None
@@ -358,7 +358,6 @@ class GrabCore:
             for c in backup_courses:
                 self.log(f'  [备] {c["name"]} 班号{c["sn"]} dcid={c["dcid"]}')
 
-        self.target_courses = self.primary_courses
 
         self.log('>>> 开始秒抢！')
         success = self._rush(stop_check)
