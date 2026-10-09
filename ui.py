@@ -345,6 +345,8 @@ class GrabUI:
         if not cookie:
             messagebox.showwarning('提示', '请填写 Cookie')
             return
+        if '=' not in cookie:
+            cookie = f'EXESAC.SAAS.SessionId={cookie}'
 
         self.verify_btn.config(state='disabled')
         self.verify_var.set('验证中...')
@@ -373,6 +375,8 @@ class GrabUI:
 
     def start_grab(self):
         cookie = self.cookie_text.get('1.0', 'end-1c').strip().replace('\n', '').replace('\r', '')
+        if '=' not in cookie:
+            cookie = f'EXESAC.SAAS.SessionId={cookie}'
         class_name = self.class_entry.get().strip()
         time_str = f'{self.year_sb.get()}-{self.month_sb.get()}-{self.day_sb.get()} {self.hour_sb.get()}:{self.min_sb.get()}:{self.sec_sb.get()}'
         advance_str = self.advance_entry.get().strip()
