@@ -5,7 +5,7 @@ import re
 import json
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
-
+from courses_data import BUILTIN_COURSES
 
 
 class GrabCore:
@@ -176,6 +176,21 @@ class GrabCore:
     def find_courses_for_class(self, class_name):
         return self.find_all_courses(keyword='', class_name=class_name)
 
+    @staticmethod
+    def get_builtin_courses(class_name=''):
+        courses = []
+        for c in BUILTIN_COURSES:
+            if class_name and class_name not in c['classes']:
+                continue
+            courses.append({
+                'name': c['name'], 'sn': c['sn'], 'assign': c['assign'],
+                'credit': c['credit'], 'capacity': c['capacity'],
+                'remaining': -1,
+                'dcid': c['dcid'], 'course_id': c['course_id'],
+                'classes': c['classes'], 'raw': {}
+            })
+        return courses
+
     def _parse_courses_from_html(self, html, keyword='', class_name=''):
         courses = []
         trs = re.findall(r'<tr class="item"[^>]*>.*?</tr>', html, re.S)
@@ -321,26 +336,17 @@ class GrabCore:
             self.target_courses = target_courses
             self.log(f'✓ 使用已选 {len(target_courses)} 个教学班:')
         else:
-            self.log(f'>>> 拉取 [{class_name}] 可选课程...')
-            courses = self.find_courses_for_class(class_name)
+            courses = self.get_builtin_courses(class_name)
             if not courses:
-                self.log('⚠ 未找到可选课程，将持续尝试...')
-                for _ in range(10):
-                    if stop_check():
-                        return False
-                    time.sleep(1)
-                    courses = self.find_courses_for_class(class_name)
-                    if courses:
-                        break
-            if not courses:
-                self.log('✗ 仍未找到可选课程，退出')
+                self.log(f'✗ 内置数据中未找到 [{class_name}] 可选课程')
                 return False
             self.target_courses = courses
-            self.log(f'✓ 拉取到 {len(courses)} 个教学班:')
+            self.log(f'✓ 内置数据: [{class_name}] 共 {len(courses)} 个教学班:')
 
         for c in self.target_courses:
-            tag = '✓' if c['remaining'] > 0 else '✗'
-            self.log(f'  {tag} {c["name"]} 班号{c["sn"]} 余量{c["remaining"]}/{c["capacity"]}')
+            r = c['remaining']
+            r_str = f'{r}/{c["capacity"]}' if r >= 0 else f'?/{c["capacity"]}'
+            self.log(f'  {c["name"]} 班号{c["sn"]} 余量{r_str}')
 
         self.log('>>> 开始秒抢！')
         success = self._rush(stop_check)

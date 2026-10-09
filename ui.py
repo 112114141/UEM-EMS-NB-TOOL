@@ -31,7 +31,6 @@ class GrabUI:
         self.stop_flag = False
         self.grab_thread = None
         self.verify_thread = None
-        self.fetch_thread = None
         self.course_vars = []
         self.course_data = []
         self._build_ui()
@@ -84,19 +83,14 @@ class GrabUI:
         )
         self.class_entry = ttk.Entry(info_frame, width=20)
         self.class_entry.grid(row=1, column=1, sticky='w', pady=2)
+        self.class_entry.bind('<KeyRelease>', lambda e: self._refresh_course_list())
 
-        course_frame = ttk.LabelFrame(self.root, text='课程列表（选课开放后可拉取，不选则到点自动拉取全部）', padding=10)
+        course_frame = ttk.LabelFrame(self.root, text='课程列表（内置数据，填班级自动过滤，勾选要抢的课）', padding=10)
         course_frame.pack(fill='both', expand=False, padx=12, pady=4)
 
-        fetch_btn_frame = ttk.Frame(course_frame)
-        fetch_btn_frame.pack(fill='x', pady=(0, 4))
-        self.fetch_btn = ttk.Button(
-            fetch_btn_frame, text='拉取课程', command=self.fetch_courses
-        )
-        self.fetch_btn.pack(side='left')
-        self.fetch_status_var = tk.StringVar(value='未拉取')
-        ttk.Label(fetch_btn_frame, textvariable=self.fetch_status_var,
-                  font=_font(9)).pack(side='left', padx=(10, 0))
+        self.fetch_status_var = tk.StringVar(value='请先填写班级')
+        ttk.Label(course_frame, textvariable=self.fetch_status_var,
+                  font=_font(9)).pack(anchor='w', pady=(0, 4))
 
         list_inner = ttk.Frame(course_frame)
         list_inner.pack(fill='both', expand=True)
@@ -210,6 +204,32 @@ class GrabUI:
         link_label.bind('<Button-1>',
             lambda e: webbrowser.open('https://github.com/112114141'))
 
+    def _refresh_course_list(self):
+        class_name = self.class_entry.get().strip()
+        if not class_name:
+            self.course_data = []
+            self.course_vars = []
+            self.course_tree.delete(*self.course_tree.get_children())
+            self.fetch_status_var.set('请先填写班级')
+            return
+
+        courses = GrabCore.get_builtin_courses(class_name)
+        self.course_data = courses
+        self.course_vars = [False] * len(courses)
+        self.course_tree.delete(*self.course_tree.get_children())
+
+        for i, c in enumerate(self.course_data):
+            self.course_tree.insert(
+                '', 'end',
+                text='☐',
+                values=(c['sn'], c['assign'], '?', c['capacity']),
+                iid=str(i)
+            )
+
+        self.fetch_status_var.set(
+            f'共 {len(courses)} 个教学班（余量到点后实时查询）'
+        )
+
     def _on_tree_click(self, event):
         region = self.course_tree.identify('region', event.x, event.y)
         if region != 'tree':
@@ -239,8 +259,6 @@ class GrabUI:
     def _update_status(self, msg):
         if '倒计时' in msg:
             self.status_var.set('倒计时中')
-        elif '拉取' in msg and '可选课程' in msg:
-            self.status_var.set('拉取课程中')
         elif '开始秒抢' in msg:
             self.status_var.set('秒抢中')
         elif '转入捡漏' in msg:
@@ -299,69 +317,6 @@ class GrabUI:
     def _on_verify_done(self, ok, msg):
         self.verify_btn.config(state='normal')
         self.verify_var.set(msg)
-
-    def fetch_courses(self):
-        cookie = self.cookie_text.get('1.0', 'end-1c').strip().replace('\n', '').replace('\r', '')
-        class_name = self.class_entry.get().strip()
-
-        if not cookie:
-            messagebox.showwarning('提示', '请填写 Cookie')
-            return
-        if not class_name:
-            messagebox.showwarning('提示', '请填写班级')
-            return
-
-        self.fetch_btn.config(state='disabled')
-        self.fetch_status_var.set('正在拉取...')
-
-        self.fetch_thread = threading.Thread(
-            target=self._run_fetch,
-            args=(cookie, class_name),
-            daemon=True
-        )
-        self.fetch_thread.start()
-
-    def _run_fetch(self, cookie, class_name):
-        try:
-            core = GrabCore(cookie, log_func=self.log)
-            if not core.check_cookie():
-                self.log('✗ Cookie 已过期')
-                self.root.after(0, lambda: self._on_fetch_done(False))
-                return
-            core.detect_apis()
-            if not core.lubn:
-                self.log('⚠ 选课尚未开放，无法拉取课程列表')
-                self.root.after(0, lambda: self._on_fetch_done(False))
-                return
-            courses = core.find_courses_for_class(class_name)
-            self.log(f'✓ 拉取到 {len(courses)} 个教学班')
-            self.root.after(0, lambda: self._on_fetch_done(True, courses))
-        except Exception as e:
-            self.log(f'✗ 拉取失败: {e}')
-            self.root.after(0, lambda: self._on_fetch_done(False))
-
-    def _on_fetch_done(self, success, courses=None):
-        self.fetch_btn.config(state='normal')
-        if not success:
-            self.fetch_status_var.set('拉取失败')
-            return
-
-        self.course_data = courses or []
-        self.course_vars = [False] * len(self.course_data)
-        self.course_tree.delete(*self.course_tree.get_children())
-
-        for i, c in enumerate(self.course_data):
-            self.course_tree.insert(
-                '', 'end',
-                text='☐',
-                values=(c['sn'], c['assign'], c['remaining'], c['capacity']),
-                iid=str(i)
-            )
-
-        avail = sum(1 for c in self.course_data if c['remaining'] > 0)
-        self.fetch_status_var.set(
-            f'共 {len(self.course_data)} 个班，{avail} 个有余量'
-        )
 
     def start_grab(self):
         cookie = self.cookie_text.get('1.0', 'end-1c').strip().replace('\n', '').replace('\r', '')
