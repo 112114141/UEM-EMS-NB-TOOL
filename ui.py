@@ -25,11 +25,14 @@ class GrabUI:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title('UEM Course Grabbing Tool')
-        self.root.geometry('680x700')
+        self.root.geometry('760x820')
         self.root.resizable(False, False)
         self.core = None
         self.stop_flag = False
         self.grab_thread = None
+        self.fetch_thread = None
+        self.course_vars = []
+        self.course_data = []
         self._build_ui()
         self._center_window()
 
@@ -56,7 +59,7 @@ class GrabUI:
         cookie_inner = ttk.Frame(info_frame)
         cookie_inner.grid(row=0, column=1, sticky='we', pady=2)
         self.cookie_text = tk.Text(
-            cookie_inner, height=3, width=72, wrap='none',
+            cookie_inner, height=3, width=80, wrap='none',
             font=_mono_font(8), relief='sunken', borderwidth=1
         )
         cookie_scroll = ttk.Scrollbar(
@@ -67,11 +70,53 @@ class GrabUI:
         self.cookie_text.pack(fill='x')
         cookie_scroll.pack(fill='x')
 
-        ttk.Label(info_frame, text='课程名:').grid(
+        ttk.Label(info_frame, text='我的班级:').grid(
             row=1, column=0, sticky='w', pady=2
         )
-        self.course_entry = ttk.Entry(info_frame, width=72)
-        self.course_entry.grid(row=1, column=1, sticky='we', pady=2)
+        self.class_entry = ttk.Entry(info_frame, width=20)
+        self.class_entry.grid(row=1, column=1, sticky='w', pady=2)
+        self.class_entry.insert(0, '化安262')
+
+        course_frame = ttk.LabelFrame(self.root, text='课程列表', padding=10)
+        course_frame.pack(fill='both', expand=False, padx=12, pady=4)
+
+        fetch_btn_frame = ttk.Frame(course_frame)
+        fetch_btn_frame.pack(fill='x', pady=(0, 4))
+        self.fetch_btn = ttk.Button(
+            fetch_btn_frame, text='拉取课程', command=self.fetch_courses
+        )
+        self.fetch_btn.pack(side='left')
+        self.fetch_status_var = tk.StringVar(value='未拉取')
+        ttk.Label(fetch_btn_frame, textvariable=self.fetch_status_var,
+                  font=_font(9)).pack(side='left', padx=(10, 0))
+
+        list_inner = ttk.Frame(course_frame)
+        list_inner.pack(fill='both', expand=True)
+
+        self.course_tree = ttk.Treeview(
+            list_inner,
+            columns=('sn', 'assign', 'remain', 'capacity'),
+            show='tree headings',
+            height=8
+        )
+        self.course_tree.heading('#0', text='☑')
+        self.course_tree.heading('sn', text='班号')
+        self.course_tree.heading('assign', text='教师/时间')
+        self.course_tree.heading('remain', text='余量')
+        self.course_tree.heading('capacity', text='容量')
+        self.course_tree.column('#0', width=200, anchor='w')
+        self.course_tree.column('sn', width=60, anchor='center')
+        self.course_tree.column('assign', width=200, anchor='w')
+        self.course_tree.column('remain', width=50, anchor='center')
+        self.course_tree.column('capacity', width=50, anchor='center')
+        self.course_tree.pack(side='left', fill='both', expand=True)
+        course_scroll = ttk.Scrollbar(
+            list_inner, orient='vertical',
+            command=self.course_tree.yview
+        )
+        self.course_tree.configure(yscrollcommand=course_scroll.set)
+        course_scroll.pack(side='right', fill='y')
+        self.course_tree.bind('<Button-1>', self._on_tree_click)
 
         time_frame = ttk.LabelFrame(self.root, text='时间设置', padding=10)
         time_frame.pack(fill='x', padx=12, pady=4)
@@ -136,7 +181,7 @@ class GrabUI:
         ttk.Button(log_header, text='清空', command=self.clear_log).pack(side='right')
 
         self.log_text = scrolledtext.ScrolledText(
-            self.root, width=85, height=18, font=_mono_font(9),
+            self.root, width=90, height=14, font=_mono_font(9),
             state='disabled'
         )
         self.log_text.pack(fill='both', expand=True, padx=12, pady=(2, 4))
@@ -156,6 +201,21 @@ class GrabUI:
         link_label.pack(side='left')
         link_label.bind('<Button-1>',
             lambda e: webbrowser.open('https://github.com/112114141'))
+
+    def _on_tree_click(self, event):
+        region = self.course_tree.identify('region', event.x, event.y)
+        if region != 'tree':
+            return
+        item = self.course_tree.identify_row(event.y)
+        if not item:
+            return
+        col = self.course_tree.identify_column(event.x)
+        if col != '#0':
+            return
+        idx = self.course_tree.index(item)
+        if idx < len(self.course_vars):
+            self.course_vars[idx] = not self.course_vars[idx]
+            self.course_tree.item(item, text='☑' if self.course_vars[idx] else '☐')
 
     def _get_log_tag(self, msg):
         if '✅' in msg or '成功' in msg:
@@ -199,17 +259,90 @@ class GrabUI:
         self.log_text.delete('1.0', 'end')
         self.log_text.config(state='disabled')
 
+    def fetch_courses(self):
+        cookie = self.cookie_text.get('1.0', 'end-1c').strip().replace('\n', '').replace('\r', '')
+        class_name = self.class_entry.get().strip()
+
+        if not cookie:
+            messagebox.showwarning('提示', '请填写 Cookie')
+            return
+        if not class_name:
+            messagebox.showwarning('提示', '请填写班级')
+            return
+
+        self.fetch_btn.config(state='disabled')
+        self.fetch_status_var.set('正在拉取...')
+        self.clear_log()
+
+        self.fetch_thread = threading.Thread(
+            target=self._run_fetch,
+            args=(cookie, class_name),
+            daemon=True
+        )
+        self.fetch_thread.start()
+
+    def _run_fetch(self, cookie, class_name):
+        try:
+            core = GrabCore(cookie, log_func=self.log)
+            self.log('正在检查 Cookie...')
+            if not core.check_cookie():
+                self.log('✗ Cookie 已过期')
+                self.root.after(0, lambda: self._on_fetch_done(False))
+                return
+            self.log('✓ Cookie 有效')
+
+            self.log('正在探测选课接口...')
+            core.detect_apis()
+            if not core.lubn:
+                self.log('⚠ 选课尚未开放，无法拉取课程列表')
+                self.root.after(0, lambda: self._on_fetch_done(False))
+                return
+
+            self.log(f'正在拉取 [{class_name}] 可选课程...')
+            courses = core.find_courses_for_class(class_name)
+            self.log(f'✓ 找到 {len(courses)} 个教学班')
+
+            self.root.after(0, lambda: self._on_fetch_done(True, courses))
+        except Exception as e:
+            self.log(f'✗ 拉取失败: {e}')
+            self.root.after(0, lambda: self._on_fetch_done(False))
+
+    def _on_fetch_done(self, success, courses=None):
+        self.fetch_btn.config(state='normal')
+        if not success:
+            self.fetch_status_var.set('拉取失败')
+            return
+
+        self.course_data = courses or []
+        self.course_vars = [False] * len(self.course_data)
+        self.course_tree.delete(*self.course_tree.get_children())
+
+        for i, c in enumerate(self.course_data):
+            self.course_tree.insert(
+                '', 'end',
+                text='☐',
+                values=(c['sn'], c['assign'], c['remaining'], c['capacity']),
+                iid=str(i)
+            )
+
+        avail = sum(1 for c in self.course_data if c['remaining'] > 0)
+        self.fetch_status_var.set(
+            f'共 {len(self.course_data)} 个班，{avail} 个有余量'
+        )
+
     def start_grab(self):
         cookie = self.cookie_text.get('1.0', 'end-1c').strip().replace('\n', '').replace('\r', '')
-        keyword = self.course_entry.get().strip()
         time_str = f'{self.year_sb.get()}-{self.month_sb.get()}-{self.day_sb.get()} {self.hour_sb.get()}:{self.min_sb.get()}:{self.sec_sb.get()}'
         advance_str = self.advance_entry.get().strip()
 
         if not cookie:
             messagebox.showwarning('提示', '请填写 Cookie')
             return
-        if not keyword:
-            messagebox.showwarning('提示', '请填写课程名')
+
+        selected = [self.course_data[i] for i in range(len(self.course_data))
+                     if self.course_vars[i]]
+        if not selected:
+            messagebox.showwarning('提示', '请先拉取课程并勾选要抢的教学班')
             return
 
         try:
@@ -232,14 +365,14 @@ class GrabUI:
         self.core = GrabCore(cookie, log_func=self.log)
         self.grab_thread = threading.Thread(
             target=self._run_grab,
-            args=(open_time, advance, keyword),
+            args=(open_time, advance, selected),
             daemon=True
         )
         self.grab_thread.start()
 
-    def _run_grab(self, open_time, advance, keyword):
+    def _run_grab(self, open_time, advance, target_courses):
         try:
-            self.core.run(open_time, advance, keyword,
+            self.core.run(open_time, advance, target_courses,
                           lambda: self.stop_flag)
         except Exception as e:
             self.log(f'✗ 程序异常: {e}')

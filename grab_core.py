@@ -21,11 +21,12 @@ class GrabCore:
         self.time_offset = 0.0
         self.select_url = None
         self.query_url = None
-        self.target_course = None
+        self.target_courses = []
         self.lubn = None
         self.select_type = None
         self.cstask_id = None
         self.page_html = None
+        self.select_page_path = None
         self._log = log_func or print
 
     def log(self, msg):
@@ -121,6 +122,7 @@ class GrabCore:
             page_path = f'/CourseSelectHtml/{lubn}/all.html'
         else:
             page_path = f'/CourseSelectHtml/{lubn}/all_FormalSelecting.html'
+        self.select_page_path = page_path
         try:
             resp = self.session.get(self.base_url + page_path, timeout=5)
             if resp.status_code != 200 or 'Login.aspx' in resp.url:
@@ -162,16 +164,19 @@ class GrabCore:
         courses = self.find_all_courses(keyword)
         return courses[0] if courses else None
 
-    def find_all_courses(self, keyword):
+    def find_all_courses(self, keyword='', class_name=''):
         if not self.page_html:
             if not self.lubn:
                 return []
             self._extract_apis_from_page(self.lubn, self.select_type or '4')
         if not self.page_html:
             return []
-        return self._parse_courses_from_html(self.page_html, keyword)
+        return self._parse_courses_from_html(self.page_html, keyword, class_name)
 
-    def _parse_courses_from_html(self, html, keyword):
+    def find_courses_for_class(self, class_name):
+        return self.find_all_courses(keyword='', class_name=class_name)
+
+    def _parse_courses_from_html(self, html, keyword='', class_name=''):
         courses = []
         trs = re.findall(r'<tr class="item"[^>]*>.*?</tr>', html, re.S)
         for tr in trs:
@@ -192,10 +197,16 @@ class GrabCore:
             luid_m = re.search(r"luid='(\d+)'", tr)
             dcid = dcid_m.group(1) if dcid_m else ''
             luid = luid_m.group(1) if luid_m else ''
+            classes = []
+            if len(tds) > 7:
+                classes_text = re.sub(r'<[^>]+>', ' ', tds[7])
+                classes = [c.strip() for c in classes_text.split() if c.strip()]
+            if class_name and class_name not in classes:
+                continue
             courses.append({
                 'name': name, 'sn': sn, 'assign': assign,
                 'credit': credit, 'capacity': cap, 'remaining': cap - sel,
-                'dcid': dcid, 'course_id': luid, 'raw': {}
+                'dcid': dcid, 'course_id': luid, 'classes': classes, 'raw': {}
             })
         return courses
 
@@ -213,7 +224,14 @@ class GrabCore:
             url = self.select_url
             if 'ron=' not in url:
                 url += '&ron=' + str(random.random())
-            resp = self.session.post(url, data=params, timeout=3)
+            headers = {
+                'X-Requested-With': 'XMLHttpRequest',
+                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                'Origin': self.base_url,
+            }
+            if self.select_page_path:
+                headers['Referer'] = f'{self.base_url}{self.select_page_path}?rondom={random.random()}'
+            resp = self.session.post(url, data=params, headers=headers, timeout=3)
             return self._check_result(resp)
         except Exception as e:
             return False, str(e)
@@ -238,7 +256,7 @@ class GrabCore:
             pass
         return False, text[:100]
 
-    def run(self, open_time, advance_seconds, keyword, stop_check):
+    def run(self, open_time, advance_seconds, target_courses, stop_check):
         self.log('=== 抢课脚本启动 ===')
 
         self.log('正在校准服务器时间...')
@@ -256,32 +274,16 @@ class GrabCore:
 
         self.log('正在探测选课接口...')
         self.detect_apis()
-        if self.query_url:
-            self.log(f'  查询接口: {self.query_url}')
         if self.select_url:
             self.log(f'  选课接口: {self.select_url}')
         if self.cstask_id:
             self.log(f'  选课任务ID: {self.cstask_id}')
 
-        self.log(f'目标课程关键词: {keyword}')
-        if self.lubn:
-            courses = self.find_all_courses(keyword)
-            if courses:
-                self.log(f'✓ 找到 {len(courses)} 个教学班:')
-                for c in courses:
-                    tag = '✓' if c['remaining'] > 0 else '✗'
-                    self.log(f'  {tag} {c["name"]} 班号{c["sn"]} 余量{c["remaining"]}/{c["capacity"]} dcid={c["dcid"]}')
-                target = next((c for c in courses if c['remaining'] > 0), None)
-                if target:
-                    self.target_course = target
-                    self.log(f'✓ 自动选择有余量的教学班: 班号{target["sn"]} 余量{target["remaining"]}')
-                else:
-                    self.target_course = courses[0]
-                    self.log(f'⚠ 所有班已满，将盯班号{courses[0]["sn"]}')
-            else:
-                self.log(f'⚠ 暂未找到包含"{keyword}"的课程，将在抢课时持续尝试')
-        else:
-            self.log('⚠ 选课尚未开放，无法预查课程，将在抢课时自动适配')
+        self.target_courses = target_courses
+        self.log(f'目标教学班: {len(target_courses)} 个')
+        for c in target_courses:
+            tag = '✓' if c['remaining'] > 0 else '✗'
+            self.log(f'  {tag} {c["name"]} 班号{c["sn"]} 余量{c["remaining"]}/{c["capacity"]} dcid={c["dcid"]}')
 
         start_time = open_time - timedelta(seconds=advance_seconds)
         self.log(f'计划开始时间: {start_time.strftime("%Y-%m-%d %H:%M:%S")}（提前 {advance_seconds} 秒）')
@@ -308,13 +310,11 @@ class GrabCore:
         if not self.lubn:
             self.log('>>> 选课即将开放，重新探测接口...')
             self.detect_apis()
-            if self.query_url:
-                self.log(f'  查询接口: {self.query_url}')
             if self.select_url:
                 self.log(f'  选课接口: {self.select_url}')
 
         self.log('>>> 开始秒抢！')
-        success = self._rush(keyword, stop_check)
+        success = self._rush(stop_check)
 
         if success:
             self.log('✅✅✅ 抢课成功！')
@@ -325,7 +325,7 @@ class GrabCore:
             return False
 
         self.log('>>> 转入捡漏模式...')
-        success = self._scavenge(keyword, stop_check)
+        success = self._scavenge(stop_check)
 
         if success:
             self.log('✅✅✅ 捡漏成功！')
@@ -334,28 +334,18 @@ class GrabCore:
         self.log('已停止')
         return False
 
-    def _rush(self, keyword, stop_check):
+    def _rush(self, stop_check):
         fail_count = 0
-        last_check_time = time.time()
 
         with ThreadPoolExecutor(max_workers=5) as executor:
             while not stop_check():
-                course = self.target_course
-                if not course:
-                    courses = self.find_all_courses(keyword)
-                    if courses:
-                        target = next((c for c in courses if c['remaining'] > 0), None)
-                        if target:
-                            self.target_course = target
-                            self.log(f'定位到教学班: {target["name"]} 班号{target["sn"]} 余量{target["remaining"]}')
-                            course = target
-
-                if not course:
+                courses = self.target_courses
+                if not courses:
                     time.sleep(0.5)
                     continue
 
-                futures = [executor.submit(self.submit_select, course)
-                           for _ in range(5)]
+                futures = [executor.submit(self.submit_select, c)
+                           for c in courses for _ in range(3)]
                 try:
                     for f in as_completed(futures, timeout=5):
                         success, msg = f.result()
@@ -367,46 +357,34 @@ class GrabCore:
                         f.cancel()
                     self.log('⚠ 本轮提交超时，已跳过')
 
-                fail_count += 5
-                if fail_count % 50 == 0:
+                fail_count += len(courses) * 3
+                if fail_count % 50 < len(courses) * 3:
                     self.log(f'秒抢已提交 {fail_count} 次，尚未成功')
-
-                now = time.time()
-                if now - last_check_time >= 2:
-                    last_check_time = now
-                    courses = self.find_all_courses(keyword)
-                    if courses:
-                        target = next((c for c in courses if c['remaining'] > 0), None)
-                        if target:
-                            self.target_course = target
-                        elif fail_count % 50 == 0:
-                            self.log('所有班已满，继续秒抢')
 
                 time.sleep(0.05)
 
         return False
 
-    def _scavenge(self, keyword, stop_check):
+    def _scavenge(self, stop_check):
         attempt = 0
         while not stop_check():
             attempt += 1
-            courses = self.find_all_courses(keyword)
-            target = next((c for c in courses if c['remaining'] > 0), None)
-            if target:
-                self.log(f'[捡漏 #{attempt}] {target["name"]} 班号{target["sn"]} 余量{target["remaining"]}，立即提交！')
-                success, msg = self.submit_select(target)
-                if success:
-                    self.log(f'捡漏成功: {msg}')
-                    return True
-                else:
-                    self.log(f'提交失败: {msg}')
-                    if 'Cookie过期' in msg:
-                        self.log('✗ Cookie 已过期，请重新登录更新 Cookie')
-                        return False
-            else:
-                if attempt % 20 == 0:
-                    self.log(f'[捡漏 #{attempt}] 无有余量的教学班，继续等待...')
-
+            for c in self.target_courses:
+                if stop_check():
+                    return False
+                if c['remaining'] > 0:
+                    self.log(f'[捡漏 #{attempt}] {c["name"]} 班号{c["sn"]} 余量{c["remaining"]}，立即提交！')
+                    success, msg = self.submit_select(c)
+                    if success:
+                        self.log(f'捡漏成功: {msg}')
+                        return True
+                    else:
+                        self.log(f'提交失败: {msg}')
+                        if 'Cookie过期' in msg:
+                            self.log('✗ Cookie 已过期，请重新登录更新 Cookie')
+                            return False
+            if attempt % 20 == 0:
+                self.log(f'[捡漏 #{attempt}] 暂无有余量的教学班，继续等待...')
             time.sleep(1.5 + random.uniform(0, 0.5))
 
         return False
