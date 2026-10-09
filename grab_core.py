@@ -430,8 +430,13 @@ class GrabCore:
         round_count = 0
         exhausted = set()
         switched_to_backup = False
+        rush_start = time.time()
 
         while not stop_check():
+            if time.time() - rush_start > 30:
+                self.log('⚠ 秒抢超过30秒未成功，转入捡漏模式')
+                return False
+
             primary = [c for c in self.primary_courses if c['dcid'] not in exhausted]
             backup = [c for c in self.backup_courses if c['dcid'] not in exhausted]
             if primary:
@@ -463,7 +468,7 @@ class GrabCore:
                     self.log(f'  ✗ {c["name"]} 班号{c["sn"]} → {msg}')
                 if '-555' in msg:
                     got_555 = True
-                if '没有名额' in msg or '-8' in msg:
+                if '没有名额' in msg or '-8' in msg or '已选其他班' in msg or '-5' in msg or '时间冲突' in msg or '-3' in msg:
                     exhausted.add(c['dcid'])
 
             if not primary and backup and not switched_to_backup:
