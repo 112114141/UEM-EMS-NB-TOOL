@@ -64,7 +64,9 @@ class GrabCore:
     def _start_select(self):
         url = self.base_url + '/Student/CourseSelection/CourseSelectionHandler.ashx?action=startSelect'
         try:
-            resp = self.session.post(url, timeout=5)
+            resp = self.session.post(url, timeout=5, headers={
+                'X-Requested-With': 'XMLHttpRequest'
+            })
         except Exception:
             return {'status': 'error', 'message': '请求失败'}
         data = resp.text.strip()

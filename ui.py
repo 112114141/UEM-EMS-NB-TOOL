@@ -117,6 +117,8 @@ class GrabUI:
         self.course_tree.column('assign', width=180, anchor='w')
         self.course_tree.column('remain', width=50, anchor='center')
         self.course_tree.column('capacity', width=50, anchor='center')
+        self.course_tree.tag_configure('main_sel', background='#d4edda')
+        self.course_tree.tag_configure('backup_sel', background='#fff3cd')
         self.course_tree.pack(side='left', fill='both', expand=True)
         course_scroll = ttk.Scrollbar(
             list_inner, orient='vertical',
@@ -264,21 +266,35 @@ class GrabUI:
                 vals[0] = '☐'
                 if not any(self.main_vars):
                     self.main_course_name = None
+                self.course_tree.item(item, values=vals, tags=())
             else:
                 cname = self.course_data[idx]['name']
                 if self.main_course_name and cname != self.main_course_name:
                     messagebox.showwarning('提示',
                         f'主选只能选同一课程的不同班号\n当前主选: {self.main_course_name}\n该课程: {cname}')
                     return
+                if self.backup_vars[idx]:
+                    self.backup_vars[idx] = False
+                    vals[1] = '☐'
                 self.main_vars[idx] = True
                 self.main_course_name = cname
                 vals[0] = '☑'
-            self.course_tree.item(item, values=vals)
+                self.course_tree.item(item, values=vals, tags=('main_sel',))
 
         elif col == '#2':
-            self.backup_vars[idx] = not self.backup_vars[idx]
-            vals[1] = '☑' if self.backup_vars[idx] else '☐'
-            self.course_tree.item(item, values=vals)
+            if self.backup_vars[idx]:
+                self.backup_vars[idx] = False
+                vals[1] = '☐'
+                self.course_tree.item(item, values=vals, tags=())
+            else:
+                if self.main_vars[idx]:
+                    self.main_vars[idx] = False
+                    vals[0] = '☐'
+                    if not any(self.main_vars):
+                        self.main_course_name = None
+                self.backup_vars[idx] = True
+                vals[1] = '☑'
+                self.course_tree.item(item, values=vals, tags=('backup_sel',))
 
     def _get_log_tag(self, msg):
         if '✅' in msg or '成功' in msg:
