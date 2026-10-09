@@ -302,8 +302,8 @@ class GrabCore:
             return False, '时间冲突(-3)'
         if text == '-8':
             return False, '没有名额了'
-        if text == '1':
-            return True, '选课成功'
+        if text in ('1', '9', '0'):
+            return True, f'选课成功(返回{text})'
         if not text or text.lstrip('-').isdigit():
             return False, f'选课失败: {text}'
         try:
@@ -423,14 +423,21 @@ class GrabCore:
         fail_count = 0
         delay = 0.1
         round_count = 0
-        exhausted_primary = set()
+        exhausted = set()
         switched_to_backup = False
 
         while not stop_check():
-            primary = [c for c in self.primary_courses if c['dcid'] not in exhausted_primary]
+            primary = [c for c in self.primary_courses if c['dcid'] not in exhausted]
+            backup = [c for c in self.backup_courses if c['dcid'] not in exhausted]
             if primary:
                 courses = primary
+            elif backup:
+                courses = backup
             else:
+                all_courses = self.primary_courses + self.backup_courses
+                if all_courses and all(c['dcid'] in exhausted for c in all_courses):
+                    self.log('⚠ 所有课程都没名额，转入捡漏模式')
+                    return False
                 courses = self.backup_courses or self.primary_courses
 
             if not courses:
@@ -452,13 +459,13 @@ class GrabCore:
                 if '-555' in msg:
                     got_555 = True
                 if '没有名额' in msg or '-8' in msg:
-                    exhausted_primary.add(c['dcid'])
+                    exhausted.add(c['dcid'])
 
-            if not primary and self.backup_courses and not switched_to_backup:
+            if not primary and backup and not switched_to_backup:
                 if self.primary_courses:
-                    self.log(f'⚠ 主选全部没名额，已切换备选({len(self.backup_courses)}个)')
+                    self.log(f'⚠ 主选全部没名额，已切换备选({len(backup)}个)')
                 else:
-                    self.log(f'⚠ 无主选课程，直接使用备选({len(self.backup_courses)}个)')
+                    self.log(f'⚠ 无主选课程，直接使用备选({len(backup)}个)')
                 switched_to_backup = True
 
             if got_555:

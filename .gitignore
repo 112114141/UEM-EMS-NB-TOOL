@@ -6,4 +6,4 @@ dist/
 .codeartsdoer/
 .codegraph/
 *.exe
-test_local.py
+test_local.pynul
