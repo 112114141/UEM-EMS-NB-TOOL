@@ -55,7 +55,12 @@ class GrabCore:
                 self.base_url + '/Navigation/Default.htm?v=5',
                 timeout=5, allow_redirects=True
             )
-            if 'Login.aspx' in resp.url or resp.status_code in (302, 301):
+            if 'Login' in resp.url or 'login' in resp.url:
+                return False
+            text = resp.text[:5000]
+            if '登录' in text and ('用户名' in text or '密码' in text):
+                return False
+            if len(resp.text) < 200:
                 return False
             return True
         except Exception:
