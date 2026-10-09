@@ -25,14 +25,16 @@ class GrabUI:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title('UEM Course Grabbing Tool')
-        self.root.geometry('760x780')
+        self.root.geometry('800x780')
         self.root.resizable(False, False)
         self.core = None
         self.stop_flag = False
         self.grab_thread = None
         self.verify_thread = None
-        self.course_vars = []
+        self.main_vars = []
+        self.backup_vars = []
         self.course_data = []
+        self.main_course_name = None
         self._build_ui()
         self._center_window()
 
@@ -85,7 +87,7 @@ class GrabUI:
         self.class_entry.grid(row=1, column=1, sticky='w', pady=2)
         self.class_entry.bind('<KeyRelease>', lambda e: self._refresh_course_list())
 
-        course_frame = ttk.LabelFrame(self.root, text='课程列表（点击第一列切换：☐→主→备→☐，主选没了自动抢备选）', padding=10)
+        course_frame = ttk.LabelFrame(self.root, text='课程列表（点「主」设主选，只能选同一课程不同班；点「备」设备选，随便选）', padding=10)
         course_frame.pack(fill='both', expand=False, padx=12, pady=4)
 
         self.fetch_status_var = tk.StringVar(value='请先填写班级')
@@ -97,18 +99,22 @@ class GrabUI:
 
         self.course_tree = ttk.Treeview(
             list_inner,
-            columns=('sn', 'assign', 'remain', 'capacity'),
+            columns=('main', 'backup', 'sn', 'assign', 'remain', 'capacity'),
             show='tree headings',
             height=7
         )
-        self.course_tree.heading('#0', text='选')
+        self.course_tree.heading('#0', text='课程名')
+        self.course_tree.heading('main', text='主')
+        self.course_tree.heading('backup', text='备')
         self.course_tree.heading('sn', text='班号')
         self.course_tree.heading('assign', text='教师/时间')
         self.course_tree.heading('remain', text='余量')
         self.course_tree.heading('capacity', text='容量')
-        self.course_tree.column('#0', width=200, anchor='w')
-        self.course_tree.column('sn', width=60, anchor='center')
-        self.course_tree.column('assign', width=200, anchor='w')
+        self.course_tree.column('#0', width=140, anchor='w')
+        self.course_tree.column('main', width=40, anchor='center')
+        self.course_tree.column('backup', width=40, anchor='center')
+        self.course_tree.column('sn', width=50, anchor='center')
+        self.course_tree.column('assign', width=180, anchor='w')
         self.course_tree.column('remain', width=50, anchor='center')
         self.course_tree.column('capacity', width=50, anchor='center')
         self.course_tree.pack(side='left', fill='both', expand=True)
@@ -183,7 +189,7 @@ class GrabUI:
         ttk.Button(log_header, text='清空', command=self.clear_log).pack(side='right')
 
         self.log_text = scrolledtext.ScrolledText(
-            self.root, width=90, height=12, font=_mono_font(9),
+            self.root, width=95, height=12, font=_mono_font(9),
             state='disabled'
         )
         self.log_text.pack(fill='both', expand=True, padx=12, pady=(2, 4))
@@ -208,26 +214,30 @@ class GrabUI:
         class_name = self.class_entry.get().strip()
         if not class_name:
             self.course_data = []
-            self.course_vars = []
+            self.main_vars = []
+            self.backup_vars = []
+            self.main_course_name = None
             self.course_tree.delete(*self.course_tree.get_children())
             self.fetch_status_var.set('请先填写班级')
             return
 
         courses = GrabCore.get_builtin_courses(class_name)
         self.course_data = courses
-        self.course_vars = [0] * len(courses)
+        self.main_vars = [False] * len(courses)
+        self.backup_vars = [False] * len(courses)
+        self.main_course_name = None
         self.course_tree.delete(*self.course_tree.get_children())
 
         for i, c in enumerate(self.course_data):
             self.course_tree.insert(
                 '', 'end',
-                text='☐',
-                values=(c['sn'], c['assign'], '?', c['capacity']),
+                text=c['name'],
+                values=('☐', '☐', c['sn'], c['assign'], '?', c['capacity']),
                 iid=str(i)
             )
 
         self.fetch_status_var.set(
-            f'共 {len(courses)} 个教学班（点击第一列：☐→主→备→☐）'
+            f'共 {len(courses)} 个教学班（点「主」选主选，点「备」选备选）'
         )
 
     def _on_tree_click(self, event):
@@ -238,14 +248,35 @@ class GrabUI:
         if not item:
             return
         col = self.course_tree.identify_column(event.x)
-        if col != '#0':
+        if col not in ('#1', '#2'):
             return
         idx = self.course_tree.index(item)
-        if idx >= len(self.course_vars):
+        if idx >= len(self.course_data):
             return
-        self.course_vars[idx] = (self.course_vars[idx] + 1) % 3
-        labels = {0: '☐', 1: '主', 2: '备'}
-        self.course_tree.item(item, text=labels[self.course_vars[idx]])
+
+        vals = list(self.course_tree.item(item, 'values'))
+
+        if col == '#1':
+            if self.main_vars[idx]:
+                self.main_vars[idx] = False
+                vals[0] = '☐'
+                if not any(self.main_vars):
+                    self.main_course_name = None
+            else:
+                cname = self.course_data[idx]['name']
+                if self.main_course_name and cname != self.main_course_name:
+                    messagebox.showwarning('提示',
+                        f'主选只能选同一课程的不同班号\n当前主选: {self.main_course_name}\n该课程: {cname}')
+                    return
+                self.main_vars[idx] = True
+                self.main_course_name = cname
+                vals[0] = '☑'
+            self.course_tree.item(item, values=vals)
+
+        elif col == '#2':
+            self.backup_vars[idx] = not self.backup_vars[idx]
+            vals[1] = '☑' if self.backup_vars[idx] else '☐'
+            self.course_tree.item(item, values=vals)
 
     def _get_log_tag(self, msg):
         if '✅' in msg or '成功' in msg:
@@ -336,7 +367,7 @@ class GrabUI:
         try:
             open_time = datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S')
         except ValueError:
-            messagebox.showwarning('提示', '时间格式错误，应为 2026-10-09 16:00:00')
+            messagebox.showwarning('提示', '时间格式错误')
             return
 
         try:
@@ -345,9 +376,13 @@ class GrabUI:
             advance = 10.0
 
         primary = [self.course_data[i] for i in range(len(self.course_data))
-                    if i < len(self.course_vars) and self.course_vars[i] == 1]
+                    if i < len(self.main_vars) and self.main_vars[i]]
         backup = [self.course_data[i] for i in range(len(self.course_data))
-                   if i < len(self.course_vars) and self.course_vars[i] == 2]
+                   if i < len(self.backup_vars) and self.backup_vars[i]]
+
+        if not primary and not backup:
+            messagebox.showwarning('提示', '请至少选一个主选或备选课程')
+            return
 
         self.stop_flag = False
         self.start_btn.config(state='disabled')
