@@ -5,7 +5,7 @@ import re
 import json
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
-from concurrent.futures import ThreadPoolExecutor, as_completed
+
 
 
 class GrabCore:
@@ -344,50 +344,41 @@ class GrabCore:
 
     def _rush(self, stop_check):
         fail_count = 0
-        delay = 0.05
-        rush_count = 0
-        slow_count = 0
+        delay = 0.1
+        round_count = 0
 
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            while not stop_check():
-                courses = self.target_courses
-                if not courses:
-                    time.sleep(0.5)
-                    continue
+        while not stop_check():
+            courses = self.target_courses
+            if not courses:
+                time.sleep(0.5)
+                continue
 
-                futures = [executor.submit(self.submit_select, c)
-                           for c in courses for _ in range(3)]
-                got_555 = False
-                try:
-                    for f in as_completed(futures, timeout=5):
-                        success, msg = f.result()
-                        if success:
-                            self.log(f'秒抢命中: {msg}')
-                            return True
-                        if '-555' in msg:
-                            got_555 = True
-                except Exception:
-                    for f in futures:
-                        f.cancel()
-                    self.log('⚠ 本轮提交超时，已跳过')
+            round_count += 1
+            got_555 = False
+            for c in courses:
+                if stop_check():
+                    return False
+                success, msg = self.submit_select(c)
+                fail_count += 1
+                if success:
+                    self.log(f'✅ 秒抢命中: {c["name"]} 班号{c["sn"]} → {msg}')
+                    return True
+                if '-555' in msg:
+                    got_555 = True
 
-                if got_555:
-                    slow_count += 1
-                    delay = min(delay * 2, 2.0)
-                    if delay < 0.3:
-                        delay = 0.3
-                    self.log(f'⚠ 操作过快，减速至 {delay:.2f}秒/轮')
-                else:
-                    rush_count += 1
-                    if rush_count % 10 == 0 and delay > 0.05:
-                        delay = max(delay * 0.7, 0.05)
-                        self.log(f'✓ 连续 {rush_count} 轮无-555，恢复至 {delay:.2f}秒/轮')
+            if got_555:
+                delay = min(delay * 1.5, 2.0)
+                if delay < 0.3:
+                    delay = 0.3
+                self.log(f'⚠ 操作过快(-555)，减速至 {delay:.2f}秒/轮')
+            elif round_count % 10 == 0 and delay > 0.1:
+                delay = max(delay * 0.8, 0.1)
+                self.log(f'✓ 连续10轮无-555，恢复至 {delay:.2f}秒/轮')
 
-                fail_count += len(courses) * 3
-                if fail_count % 50 < len(courses) * 3:
-                    self.log(f'秒抢已提交 {fail_count} 次，当前间隔 {delay:.2f}秒')
+            if round_count % 20 == 0:
+                self.log(f'秒抢第{round_count}轮，已提交{fail_count}次，间隔{delay:.2f}秒')
 
-                time.sleep(delay)
+            time.sleep(delay)
 
         return False
 
