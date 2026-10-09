@@ -259,6 +259,8 @@ class GrabCore:
             return False, '操作过快(-555)'
         if text == '-200':
             return False, '选课已暂停(-200)'
+        if text == '-202':
+            return False, '选课未到时间(-202)'
         if text == '-5':
             return False, '已选其他班(-5)'
         if text == '-3':
