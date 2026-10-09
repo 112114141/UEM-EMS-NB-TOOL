@@ -240,6 +240,14 @@ class GrabCore:
         text = resp.text.strip()
         if text in ('logintimeout', 'nopermission'):
             return False, 'Cookie过期'
+        if text == '-555':
+            return False, '操作过快(-555)'
+        if text == '-200':
+            return False, '选课已暂停(-200)'
+        if text == '-5':
+            return False, '已选其他班(-5)'
+        if text == '-3':
+            return False, '时间冲突(-3)'
         if not text or text.lstrip('-').isdigit():
             return False, f'选课失败: {text}'
         try:
@@ -336,6 +344,9 @@ class GrabCore:
 
     def _rush(self, stop_check):
         fail_count = 0
+        delay = 0.05
+        rush_count = 0
+        slow_count = 0
 
         with ThreadPoolExecutor(max_workers=5) as executor:
             while not stop_check():
@@ -346,29 +357,46 @@ class GrabCore:
 
                 futures = [executor.submit(self.submit_select, c)
                            for c in courses for _ in range(3)]
+                got_555 = False
                 try:
                     for f in as_completed(futures, timeout=5):
                         success, msg = f.result()
                         if success:
                             self.log(f'秒抢命中: {msg}')
                             return True
+                        if '-555' in msg:
+                            got_555 = True
                 except Exception:
                     for f in futures:
                         f.cancel()
                     self.log('⚠ 本轮提交超时，已跳过')
 
+                if got_555:
+                    slow_count += 1
+                    delay = min(delay * 2, 2.0)
+                    if delay < 0.3:
+                        delay = 0.3
+                    self.log(f'⚠ 操作过快，减速至 {delay:.2f}秒/轮')
+                else:
+                    rush_count += 1
+                    if rush_count % 10 == 0 and delay > 0.05:
+                        delay = max(delay * 0.7, 0.05)
+                        self.log(f'✓ 连续 {rush_count} 轮无-555，恢复至 {delay:.2f}秒/轮')
+
                 fail_count += len(courses) * 3
                 if fail_count % 50 < len(courses) * 3:
-                    self.log(f'秒抢已提交 {fail_count} 次，尚未成功')
+                    self.log(f'秒抢已提交 {fail_count} 次，当前间隔 {delay:.2f}秒')
 
-                time.sleep(0.05)
+                time.sleep(delay)
 
         return False
 
     def _scavenge(self, stop_check):
         attempt = 0
+        delay = 1.5
         while not stop_check():
             attempt += 1
+            got_555 = False
             for c in self.target_courses:
                 if stop_check():
                     return False
@@ -383,8 +411,15 @@ class GrabCore:
                         if 'Cookie过期' in msg:
                             self.log('✗ Cookie 已过期，请重新登录更新 Cookie')
                             return False
+                        if '-555' in msg:
+                            got_555 = True
+            if got_555:
+                delay = min(delay * 1.5, 5.0)
+                self.log(f'⚠ 操作过快，捡漏间隔增至 {delay:.1f}秒')
+            elif delay > 1.5:
+                delay = max(delay * 0.8, 1.5)
             if attempt % 20 == 0:
-                self.log(f'[捡漏 #{attempt}] 暂无有余量的教学班，继续等待...')
-            time.sleep(1.5 + random.uniform(0, 0.5))
+                self.log(f'[捡漏 #{attempt}] 暂无有余量的教学班，间隔 {delay:.1f}秒，继续等待...')
+            time.sleep(delay + random.uniform(0, 0.5))
 
         return False
