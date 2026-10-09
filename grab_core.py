@@ -12,7 +12,7 @@ class GrabCore:
     def __init__(self, cookie, base_url='https://jw.cidp.edu.cn', log_func=None):
         self.base_url = base_url
         self.session = requests.Session()
-        self.session.headers['Cookie'] = cookie
+        self.session.headers['Cookie'] = cookie.strip().replace('\n', '').replace('\r', '').replace('\t', '')
         self.session.headers['User-Agent'] = (
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
             'AppleWebKit/537.36 (KHTML, like Gecko) '
@@ -53,7 +53,25 @@ class GrabCore:
         try:
             r = self._start_select()
             if r['status'] == 'auth_error':
-                return False
+                url = self.base_url + '/Student/CourseSelection/CourseSelectionHandler.ashx?action=startSelect'
+                resp2 = self.session.post(url, timeout=5, headers={
+                    'X-Requested-With': 'XMLHttpRequest'
+                })
+                data2 = resp2.text.strip()
+                if data2 == 'logintimeout':
+                    return False
+                resp = self.session.get(
+                    self.base_url + '/Student/CourseSelection/CourseSelectionRedirectPage.aspx',
+                    timeout=5, allow_redirects=True
+                )
+                if 'Login' in resp.url or 'login' in resp.url:
+                    return False
+                text = resp.text[:5000]
+                if '登录' in text and ('用户名' in text or '密码' in text):
+                    return False
+                if len(resp.text) < 200:
+                    return False
+                return True
             resp = self.session.get(
                 self.base_url + '/Navigation/Default.htm?v=5',
                 timeout=5, allow_redirects=True
