@@ -18,7 +18,7 @@ A small tool to help you grab courses. At the moment registration opens, it fire
 
 ## ✨ 功能 | Features
 
-- 📋 **主选/备选勾选 / Primary & backup selection**: 课程列表分「主」「备」两列独立勾选，主选限同一课程不同班号，备选随便选 / Two-column selection: primary (same course, different sections) + backup (anything goes)
+- 📋 **主选/备选勾选 / Primary & backup selection**: 课程列表分「主」「备」两列独立勾选，主选限同一课程不同班号，备选随便选，同一行互斥；主选行标绿色、备选行标黄色 / Two-column selection: primary (same course, different sections) + backup (anything goes), mutually exclusive per row; primary rows highlighted green, backup rows yellow
 - 📦 **课程数据内置 / Built-in course data**: 189个教学班数据内置，填班级即可显示可选课程，零延迟 / 189 course sections built-in, just type your class name — zero latency
 - ⚡ **秒抢 / Rush grab**: 串行提交，主选轮询→主选全没名额自动切换备选 / Serial submission, primary rotation → auto-switch to backup when primary exhausted
 - 🎣 **捡漏 / Scavenge**: 秒抢没中？自动转入蹲守模式，每5轮刷新余量，有人退课秒补位 / Missed the rush? Auto-switches to sentry mode, refreshes capacity every 5 rounds, instantly fills vacated spots
