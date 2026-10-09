@@ -85,7 +85,7 @@ class GrabUI:
         self.class_entry.grid(row=1, column=1, sticky='w', pady=2)
         self.class_entry.bind('<KeyRelease>', lambda e: self._refresh_course_list())
 
-        course_frame = ttk.LabelFrame(self.root, text='课程列表（内置数据，填班级自动过滤，勾选要抢的课）', padding=10)
+        course_frame = ttk.LabelFrame(self.root, text='课程列表（点击第一列切换：☐→主→备→☐，主选没了自动抢备选）', padding=10)
         course_frame.pack(fill='both', expand=False, padx=12, pady=4)
 
         self.fetch_status_var = tk.StringVar(value='请先填写班级')
@@ -101,7 +101,7 @@ class GrabUI:
             show='tree headings',
             height=7
         )
-        self.course_tree.heading('#0', text='☑')
+        self.course_tree.heading('#0', text='选')
         self.course_tree.heading('sn', text='班号')
         self.course_tree.heading('assign', text='教师/时间')
         self.course_tree.heading('remain', text='余量')
@@ -145,7 +145,7 @@ class GrabUI:
         ttk.Label(sb_frame, text=' ').pack(side='left')
 
         self.hour_sb = ttk.Spinbox(sb_frame, from_=0, to=23, width=3, justify='center', state='readonly')
-        self.hour_sb.set('14')
+        self.hour_sb.set('16')
         self.hour_sb.pack(side='left')
         ttk.Label(sb_frame, text=':').pack(side='left')
 
@@ -162,7 +162,7 @@ class GrabUI:
             row=0, column=2, sticky='e', pady=2, padx=(20, 0)
         )
         self.advance_entry = ttk.Entry(time_frame, width=8)
-        self.advance_entry.insert(0, '3')
+        self.advance_entry.insert(0, '10')
         self.advance_entry.grid(row=0, column=3, sticky='w', pady=2)
 
         ctrl_frame = ttk.Frame(self.root)
@@ -215,7 +215,7 @@ class GrabUI:
 
         courses = GrabCore.get_builtin_courses(class_name)
         self.course_data = courses
-        self.course_vars = [False] * len(courses)
+        self.course_vars = [0] * len(courses)
         self.course_tree.delete(*self.course_tree.get_children())
 
         for i, c in enumerate(self.course_data):
@@ -227,7 +227,7 @@ class GrabUI:
             )
 
         self.fetch_status_var.set(
-            f'共 {len(courses)} 个教学班（余量到点后实时查询）'
+            f'共 {len(courses)} 个教学班（点击第一列：☐→主→备→☐）'
         )
 
     def _on_tree_click(self, event):
@@ -241,9 +241,11 @@ class GrabUI:
         if col != '#0':
             return
         idx = self.course_tree.index(item)
-        if idx < len(self.course_vars):
-            self.course_vars[idx] = not self.course_vars[idx]
-            self.course_tree.item(item, text='☑' if self.course_vars[idx] else '☐')
+        if idx >= len(self.course_vars):
+            return
+        self.course_vars[idx] = (self.course_vars[idx] + 1) % 3
+        labels = {0: '☐', 1: '主', 2: '备'}
+        self.course_tree.item(item, text=labels[self.course_vars[idx]])
 
     def _get_log_tag(self, msg):
         if '✅' in msg or '成功' in msg:
@@ -334,16 +336,18 @@ class GrabUI:
         try:
             open_time = datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S')
         except ValueError:
-            messagebox.showwarning('提示', '时间格式错误，应为 2026-10-09 14:00:00')
+            messagebox.showwarning('提示', '时间格式错误，应为 2026-10-09 16:00:00')
             return
 
         try:
             advance = float(advance_str)
         except ValueError:
-            advance = 3.0
+            advance = 10.0
 
-        selected = [self.course_data[i] for i in range(len(self.course_data))
-                     if i < len(self.course_vars) and self.course_vars[i]]
+        primary = [self.course_data[i] for i in range(len(self.course_data))
+                    if i < len(self.course_vars) and self.course_vars[i] == 1]
+        backup = [self.course_data[i] for i in range(len(self.course_data))
+                   if i < len(self.course_vars) and self.course_vars[i] == 2]
 
         self.stop_flag = False
         self.start_btn.config(state='disabled')
@@ -354,14 +358,14 @@ class GrabUI:
         self.core = GrabCore(cookie, log_func=self.log)
         self.grab_thread = threading.Thread(
             target=self._run_grab,
-            args=(open_time, advance, class_name, selected),
+            args=(open_time, advance, class_name, primary, backup),
             daemon=True
         )
         self.grab_thread.start()
 
-    def _run_grab(self, open_time, advance, class_name, target_courses):
+    def _run_grab(self, open_time, advance, class_name, primary, backup):
         try:
-            self.core.run(open_time, advance, class_name, target_courses,
+            self.core.run(open_time, advance, class_name, primary, backup,
                           lambda: self.stop_flag)
         except Exception as e:
             self.log(f'✗ 程序异常: {e}')

@@ -281,7 +281,7 @@ class GrabCore:
             pass
         return False, text[:100]
 
-    def run(self, open_time, advance_seconds, class_name, target_courses, stop_check):
+    def run(self, open_time, advance_seconds, class_name, primary_courses, backup_courses, stop_check):
         self.log('=== 抢课脚本启动 ===')
 
         self.log('正在校准服务器时间...')
@@ -334,21 +334,26 @@ class GrabCore:
             if self.select_url:
                 self.log(f'  选课接口: {self.select_url}')
 
-        if target_courses:
-            self.target_courses = target_courses
-            self.log(f'✓ 使用已选 {len(target_courses)} 个教学班:')
+        if primary_courses:
+            self.primary_courses = primary_courses
+            self.log(f'✓ 主选课程: {len(primary_courses)} 个教学班:')
+            for c in primary_courses:
+                self.log(f'  [主] {c["name"]} 班号{c["sn"]} dcid={c["dcid"]}')
         else:
             courses = self.get_builtin_courses(class_name)
             if not courses:
                 self.log(f'✗ 内置数据中未找到 [{class_name}] 可选课程')
                 return False
-            self.target_courses = courses
-            self.log(f'✓ 内置数据: [{class_name}] 共 {len(courses)} 个教学班:')
+            self.primary_courses = courses
+            self.log(f'✓ 内置数据: [{class_name}] 共 {len(courses)} 个教学班作为主选')
 
-        for c in self.target_courses:
-            r = c['remaining']
-            r_str = f'{r}/{c["capacity"]}' if r >= 0 else f'?/{c["capacity"]}'
-            self.log(f'  {c["name"]} 班号{c["sn"]} 余量{r_str}')
+        self.backup_courses = backup_courses
+        if backup_courses:
+            self.log(f'✓ 备选课程: {len(backup_courses)} 个教学班:')
+            for c in backup_courses:
+                self.log(f'  [备] {c["name"]} 班号{c["sn"]} dcid={c["dcid"]}')
+
+        self.target_courses = self.primary_courses
 
         self.log('>>> 开始秒抢！')
         success = self._rush(stop_check)
@@ -375,9 +380,15 @@ class GrabCore:
         fail_count = 0
         delay = 0.1
         round_count = 0
+        exhausted_primary = set()
 
         while not stop_check():
-            courses = self.target_courses
+            primary = [c for c in self.primary_courses if c['dcid'] not in exhausted_primary]
+            if primary:
+                courses = primary
+            else:
+                courses = self.backup_courses or self.primary_courses
+
             if not courses:
                 time.sleep(0.5)
                 continue
@@ -394,6 +405,11 @@ class GrabCore:
                     return True
                 if '-555' in msg:
                     got_555 = True
+                if '没有名额' in msg or '-8' in msg:
+                    exhausted_primary.add(c['dcid'])
+
+            if not primary and self.backup_courses:
+                self.log(f'⚠ 主选全部没名额，已切换备选({len(self.backup_courses)}个)')
 
             if got_555:
                 delay = min(delay * 1.5, 2.0)
@@ -414,6 +430,7 @@ class GrabCore:
     def _scavenge(self, stop_check):
         attempt = 0
         delay = 1.5
+        all_courses = self.primary_courses + self.backup_courses
         while not stop_check():
             attempt += 1
             got_555 = False
@@ -421,15 +438,15 @@ class GrabCore:
             if attempt % 5 == 0 and self.lubn:
                 fresh = self.find_all_courses()
                 fresh_map = {c['dcid']: c for c in fresh}
-                for c in self.target_courses:
+                for c in all_courses:
                     if c['dcid'] in fresh_map:
                         c['remaining'] = fresh_map[c['dcid']]['remaining']
 
-            for c in self.target_courses:
+            for c in self.primary_courses:
                 if stop_check():
                     return False
                 if c['remaining'] > 0:
-                    self.log(f'[捡漏 #{attempt}] {c["name"]} 班号{c["sn"]} 余量{c["remaining"]}，立即提交！')
+                    self.log(f'[捡漏 #{attempt}] [主] {c["name"]} 班号{c["sn"]} 余量{c["remaining"]}，立即提交！')
                     success, msg = self.submit_select(c)
                     if success:
                         self.log(f'捡漏成功: {msg}')
@@ -437,12 +454,30 @@ class GrabCore:
                     else:
                         self.log(f'提交失败: {msg}')
                         if 'Cookie过期' in msg:
-                            self.log('✗ Cookie 已过期，请重新登录更新 Cookie')
                             return False
                         if '-555' in msg:
                             got_555 = True
                         if '没有名额' in msg or '-8' in msg:
                             c['remaining'] = 0
+
+            for c in self.backup_courses:
+                if stop_check():
+                    return False
+                if c['remaining'] > 0:
+                    self.log(f'[捡漏 #{attempt}] [备] {c["name"]} 班号{c["sn"]} 余量{c["remaining"]}，立即提交！')
+                    success, msg = self.submit_select(c)
+                    if success:
+                        self.log(f'捡漏成功: {msg}')
+                        return True
+                    else:
+                        self.log(f'提交失败: {msg}')
+                        if 'Cookie过期' in msg:
+                            return False
+                        if '-555' in msg:
+                            got_555 = True
+                        if '没有名额' in msg or '-8' in msg:
+                            c['remaining'] = 0
+
             if got_555:
                 delay = min(delay * 1.5, 5.0)
                 self.log(f'⚠ 操作过快，捡漏间隔增至 {delay:.1f}秒')
