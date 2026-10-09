@@ -265,6 +265,8 @@ class GrabCore:
             return False, '已选其他班(-5)'
         if text == '-3':
             return False, '时间冲突(-3)'
+        if text == '-8':
+            return False, '没有名额了'
         if not text or text.lstrip('-').isdigit():
             return False, f'选课失败: {text}'
         try:
@@ -339,6 +341,9 @@ class GrabCore:
             self.log(f'✓ 主选课程: {len(primary_courses)} 个教学班:')
             for c in primary_courses:
                 self.log(f'  [主] {c["name"]} 班号{c["sn"]} dcid={c["dcid"]}')
+        elif backup_courses:
+            self.primary_courses = []
+            self.log('未选主选课程，仅使用备选')
         else:
             courses = self.get_builtin_courses(class_name)
             if not courses:
@@ -410,7 +415,10 @@ class GrabCore:
                     exhausted_primary.add(c['dcid'])
 
             if not primary and self.backup_courses and not switched_to_backup:
-                self.log(f'⚠ 主选全部没名额，已切换备选({len(self.backup_courses)}个)')
+                if self.primary_courses:
+                    self.log(f'⚠ 主选全部没名额，已切换备选({len(self.backup_courses)}个)')
+                else:
+                    self.log(f'⚠ 无主选课程，直接使用备选({len(self.backup_courses)}个)')
                 switched_to_backup = True
 
             if got_555:
