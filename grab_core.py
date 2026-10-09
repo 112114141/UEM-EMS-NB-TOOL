@@ -267,8 +267,10 @@ class GrabCore:
 
     def _check_result(self, resp):
         text = resp.text.strip()
-        if text in ('logintimeout', 'nopermission'):
+        if text == 'logintimeout':
             return False, 'Cookie过期'
+        if text == 'nopermission':
+            return False, '无选课权限'
         if text == '-555':
             return False, '操作过快(-555)'
         if text == '-200':
