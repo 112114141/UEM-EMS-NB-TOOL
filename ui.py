@@ -238,7 +238,7 @@ class GrabUI:
             self.course_tree.insert(
                 '', 'end',
                 text=c['name'],
-                values=('☐', '☐', c['sn'], c['assign'], '?', c['capacity']),
+                values=('☐', '☐', c['sn'], c['assign'], '-', c['capacity']),
                 iid=str(i)
             )
 
@@ -424,13 +424,16 @@ class GrabUI:
 
     def _update_courses(self, courses):
         def do_update():
-            dcid_map = {c['dcid']: c['remaining'] for c in courses}
+            dcid_map = {c['dcid']: c for c in courses}
             items = self.course_tree.get_children()
             for i, cd in enumerate(self.course_data):
                 if cd['dcid'] in dcid_map and i < len(items):
-                    cd['remaining'] = dcid_map[cd['dcid']]
+                    fresh = dcid_map[cd['dcid']]
+                    cd['remaining'] = fresh['remaining']
+                    cd['capacity'] = fresh['capacity']
                     vals = list(self.course_tree.item(items[i], 'values'))
-                    vals[4] = cd['remaining'] if cd['remaining'] >= 0 else '?'
+                    vals[4] = cd['remaining']
+                    vals[5] = cd['capacity']
                     self.course_tree.item(items[i], values=vals)
         self.root.after(0, do_update)
 

@@ -240,7 +240,7 @@ class GrabCore:
             capacity = re.sub(r'<[^>]+>', '', tds[5]).strip()
             selected = re.sub(r'<[^>]+>', '', tds[6]).strip()
             cap = int(capacity) if capacity.isdigit() else 0
-            sel = int(selected) if selected.isdigit() else 0
+            rem = int(selected) if selected.isdigit() else 0
             dcid_m = re.search(r'Selecting\(this,"(\d+)"', tr)
             luid_m = re.search(r"luid='(\d+)'", tr)
             dcid = dcid_m.group(1) if dcid_m else ''
@@ -253,7 +253,7 @@ class GrabCore:
                 continue
             courses.append({
                 'name': name, 'sn': sn, 'assign': assign,
-                'credit': credit, 'capacity': cap, 'remaining': cap - sel, 'selected': sel,
+                'credit': credit, 'capacity': cap, 'remaining': rem, 'selected': cap - rem,
                 'dcid': dcid, 'course_id': luid, 'classes': classes, 'raw': {}
             })
         return courses
@@ -286,6 +286,7 @@ class GrabCore:
 
     def _check_result(self, resp):
         text = resp.text.strip()
+        self.log(f'  服务器返回: {text[:200]}')
         if text == 'logintimeout':
             return False, 'Cookie过期'
         if text == 'nopermission':
@@ -302,24 +303,28 @@ class GrabCore:
             return False, '时间冲突(-3)'
         if text == '-8':
             return False, '没有名额了'
-        if text in ('1', '9', '0'):
+        if text in ('1', '9', '0', 'true', 'True', 'ok', 'success'):
             return True, f'选课成功(返回{text})'
         if not text or text.lstrip('-').isdigit():
             return False, f'选课失败: {text}'
         try:
             data = json.loads(text)
             state = str(data.get('state', ''))
-            if state in ('9', '1'):
-                return True, '选课成功'
+            if state in ('9', '1', '0', 'true', 'success'):
+                return True, f'选课成功(state={state})'
             if state == '-8':
                 return False, '没有名额了'
             if state == '-999':
                 return False, f'条件限制: {data.get("Name", "")}'
-            if data.get('success') is True or data.get('result') in (1, '1', True):
+            if data.get('success') is True or data.get('result') in (1, '1', '0', True, 'success', 'true'):
+                return True, '选课成功'
+            if data.get('code') in (1, '1', '0', 'success', 'true', 200, '200'):
                 return True, '选课成功'
             return False, f'选课失败: state={state}'
         except Exception:
             pass
+        if 'success' in text.lower() or 'true' in text.lower():
+            return True, f'选课成功(文本包含success/true)'
         return False, text[:100]
 
     def run(self, open_time, advance_seconds, class_name, primary_courses, backup_courses, stop_check):
@@ -478,15 +483,23 @@ class GrabCore:
 
             if round_count % 5 == 0 and self.lubn:
                 fresh = self.find_all_courses()
-                if fresh:
+                if not fresh:
+                    self.log('⚠ 刷新余量失败：未能获取课程列表(page_html可能为空)')
+                else:
                     fresh_map = {c['dcid']: c for c in fresh}
+                    matched = 0
                     for c in self.primary_courses + self.backup_courses:
                         if c['dcid'] in fresh_map:
                             c['remaining'] = fresh_map[c['dcid']]['remaining']
+                            c['capacity'] = fresh_map[c['dcid']]['capacity']
+                            matched += 1
                     self._update(self.primary_courses + self.backup_courses)
-                    remain_info = [f'{c["name"]}班{c["sn"]}:{c["remaining"]}/{c["capacity"]}' for c in courses if c['dcid'] in fresh_map]
-                    if remain_info:
-                        self.log(f'📊 余量/容量: {", ".join(remain_info)}')
+                    if matched == 0:
+                        self.log(f'⚠ 余量刷新：获取到{len(fresh)}条课程但dcid均不匹配')
+                    else:
+                        remain_info = [f'{c["name"]}班{c["sn"]}:{c["remaining"]}/{c["capacity"]}' for c in courses if c['dcid'] in fresh_map]
+                        if remain_info:
+                            self.log(f'📊 余量/容量: {", ".join(remain_info)}')
 
             self.log(f'第{round_count}轮 已提交{fail_count}次 间隔{delay:.2f}秒')
 
@@ -502,12 +515,20 @@ class GrabCore:
             attempt += 1
             got_555 = False
 
-            if attempt % 5 == 0 and self.lubn:
+            if self.lubn:
                 fresh = self.find_all_courses()
-                fresh_map = {c['dcid']: c for c in fresh}
-                for c in all_courses:
-                    if c['dcid'] in fresh_map:
-                        c['remaining'] = fresh_map[c['dcid']]['remaining']
+                if fresh:
+                    fresh_map = {c['dcid']: c for c in fresh}
+                    for c in all_courses:
+                        if c['dcid'] in fresh_map:
+                            c['remaining'] = fresh_map[c['dcid']]['remaining']
+                            c['capacity'] = fresh_map[c['dcid']]['capacity']
+                    self._update(all_courses)
+                else:
+                    self.log(f'[捡漏 #{attempt}] ⚠ 刷新余量失败')
+
+            scan_info = [f'{c["name"]}班{c["sn"]}:{c["remaining"]}/{c["capacity"]}' for c in all_courses]
+            self.log(f'[捡漏 #{attempt}] 扫描: {", ".join(scan_info)}')
 
             for c in self.primary_courses:
                 if stop_check():
@@ -516,7 +537,7 @@ class GrabCore:
                     self.log(f'[捡漏 #{attempt}] [主] {c["name"]} 班号{c["sn"]} 余量{c["remaining"]}/{c["capacity"]}，立即提交！')
                     success, msg = self.submit_select(c)
                     if success:
-                        self.log(f'捡漏成功: {msg}')
+                        self.log(f'✅ 捡漏成功: {c["name"]} 班号{c["sn"]} → {msg}')
                         return True
                     else:
                         self.log(f'提交失败: {msg}')
@@ -534,7 +555,7 @@ class GrabCore:
                     self.log(f'[捡漏 #{attempt}] [备] {c["name"]} 班号{c["sn"]} 余量{c["remaining"]}/{c["capacity"]}，立即提交！')
                     success, msg = self.submit_select(c)
                     if success:
-                        self.log(f'捡漏成功: {msg}')
+                        self.log(f'✅ 捡漏成功: {c["name"]} 班号{c["sn"]} → {msg}')
                         return True
                     else:
                         self.log(f'提交失败: {msg}')
@@ -550,8 +571,6 @@ class GrabCore:
                 self.log(f'⚠ 操作过快，捡漏间隔增至 {delay:.1f}秒')
             elif delay > 1.5:
                 delay = max(delay * 0.8, 1.5)
-            if attempt % 20 == 0:
-                self.log(f'[捡漏 #{attempt}] 暂无有余量的教学班，间隔 {delay:.1f}秒，继续等待...')
             time.sleep(delay + random.uniform(0, 0.5))
 
         return False
