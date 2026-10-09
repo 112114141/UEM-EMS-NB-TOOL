@@ -127,6 +127,8 @@ class GrabUI:
         self.course_tree.configure(yscrollcommand=course_scroll.set)
         course_scroll.pack(side='right', fill='y')
         self.course_tree.bind('<Button-1>', self._on_tree_click)
+        self.course_tree.bind('<<TreeviewSelect>>',
+            lambda e: self.course_tree.selection_set(()))
 
         time_frame = ttk.LabelFrame(self.root, text='时间设置', padding=10)
         time_frame.pack(fill='x', padx=12, pady=4)

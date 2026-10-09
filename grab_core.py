@@ -65,15 +65,19 @@ class GrabCore:
         url = self.base_url + '/Student/CourseSelection/CourseSelectionHandler.ashx?action=startSelect'
         try:
             resp = self.session.post(url, timeout=5, headers={
-                'X-Requested-With': 'XMLHttpRequest'
+                'X-Requested-With': 'XMLHttpRequest',
+                'Referer': self.base_url + '/Student/CourseSelection/FormalCourseSelect.aspx'
             })
         except Exception:
             return {'status': 'error', 'message': '请求失败'}
         data = resp.text.strip()
         result = {'status': 'unknown', 'message': data, 'lubn': None, 'type': None}
-        if data in ('logintimeout', 'nopermission'):
+        if data == 'logintimeout':
             result['status'] = 'auth_error'
             result['message'] = 'Cookie过期或无权限'
+        elif data == 'nopermission':
+            result['status'] = 'not_started'
+            result['message'] = '选课尚未开放（无选课权限）'
         elif data == '-20':
             result['status'] = 'paused'
             result['message'] = '选课已暂停'
