@@ -183,14 +183,14 @@ class GrabCore:
             tds = re.findall(r'<td[^>]*>(.*?)</td>', tr, re.S)
             if len(tds) < 7:
                 continue
-            name = tds[1].strip()
+            name = re.sub(r'<[^>]+>', '', tds[1]).strip()
             if keyword and keyword not in name:
                 continue
             sn = re.sub(r'<[^>]+>', '', tds[2]).strip()
             assign = re.sub(r'<[^>]+>', '', tds[3]).strip()
-            credit = tds[4].strip()
-            capacity = tds[5].strip()
-            selected = tds[6].strip()
+            credit = re.sub(r'<[^>]+>', '', tds[4]).strip()
+            capacity = re.sub(r'<[^>]+>', '', tds[5]).strip()
+            selected = re.sub(r'<[^>]+>', '', tds[6]).strip()
             cap = int(capacity) if capacity.isdigit() else 0
             sel = int(selected) if selected.isdigit() else 0
             dcid_m = re.search(r'Selecting\(this,"(\d+)"', tr)
@@ -388,6 +388,14 @@ class GrabCore:
         while not stop_check():
             attempt += 1
             got_555 = False
+
+            if attempt % 5 == 0 and self.lubn:
+                fresh = self.find_all_courses()
+                fresh_map = {c['dcid']: c for c in fresh}
+                for c in self.target_courses:
+                    if c['dcid'] in fresh_map:
+                        c['remaining'] = fresh_map[c['dcid']]['remaining']
+
             for c in self.target_courses:
                 if stop_check():
                     return False
@@ -404,6 +412,8 @@ class GrabCore:
                             return False
                         if '-555' in msg:
                             got_555 = True
+                        if '没有名额' in msg or '-8' in msg:
+                            c['remaining'] = 0
             if got_555:
                 delay = min(delay * 1.5, 5.0)
                 self.log(f'⚠ 操作过快，捡漏间隔增至 {delay:.1f}秒')
