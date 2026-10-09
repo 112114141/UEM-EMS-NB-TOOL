@@ -381,6 +381,7 @@ class GrabCore:
         delay = 0.1
         round_count = 0
         exhausted_primary = set()
+        switched_to_backup = False
 
         while not stop_check():
             primary = [c for c in self.primary_courses if c['dcid'] not in exhausted_primary]
@@ -408,8 +409,9 @@ class GrabCore:
                 if '没有名额' in msg or '-8' in msg:
                     exhausted_primary.add(c['dcid'])
 
-            if not primary and self.backup_courses:
+            if not primary and self.backup_courses and not switched_to_backup:
                 self.log(f'⚠ 主选全部没名额，已切换备选({len(self.backup_courses)}个)')
+                switched_to_backup = True
 
             if got_555:
                 delay = min(delay * 1.5, 2.0)
