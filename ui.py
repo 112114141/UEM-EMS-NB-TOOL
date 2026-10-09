@@ -242,7 +242,7 @@ class GrabUI:
 
     def _on_tree_click(self, event):
         region = self.course_tree.identify('region', event.x, event.y)
-        if region != 'tree':
+        if region not in ('tree', 'cell'):
             return
         item = self.course_tree.identify_row(event.y)
         if not item:
