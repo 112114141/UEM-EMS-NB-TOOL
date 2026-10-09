@@ -25,6 +25,7 @@ class GrabCore:
         self.lubn = None
         self.select_type = None
         self.cstask_id = None
+        self.page_html = None
         self._log = log_func or print
 
     def log(self, msg):
@@ -124,6 +125,8 @@ class GrabCore:
             resp = self.session.get(self.base_url + page_path, timeout=5)
             if resp.status_code != 200 or 'Login.aspx' in resp.url:
                 return False
+            resp.encoding = 'utf-8'
+            self.page_html = resp.text
             m = re.search(r'id="cstaskId"\s+value="(\d+)"', resp.text)
             if m:
                 self.cstask_id = m.group(1)
@@ -131,7 +134,7 @@ class GrabCore:
             js_resp = self.session.get(js_url, timeout=5)
             if js_resp.status_code == 200:
                 self._parse_js(js_resp.text)
-                if self.query_url and self.select_url:
+                if self.select_url:
                     return True
         except Exception:
             pass
@@ -156,69 +159,45 @@ class GrabCore:
         return self.base_url + '/' + url
 
     def find_course(self, keyword):
-        if not self.query_url:
-            return None
-        try:
-            params = {'type': '2', 'content': keyword}
-            if self.cstask_id:
-                params['cstaskId'] = self.cstask_id
-            resp = self.session.post(self.query_url, data=params, timeout=5)
-            courses = self._extract_courses(resp)
-            for c in courses:
-                if keyword in c.get('name', ''):
-                    return c
-            if courses:
-                return courses[0]
-        except Exception:
-            pass
-        return None
+        courses = self.find_all_courses(keyword)
+        return courses[0] if courses else None
 
     def find_all_courses(self, keyword):
-        if not self.query_url:
+        if not self.page_html:
+            if not self.lubn:
+                return []
+            self._extract_apis_from_page(self.lubn, self.select_type or '4')
+        if not self.page_html:
             return []
-        try:
-            params = {'type': '2', 'content': keyword}
-            if self.cstask_id:
-                params['cstaskId'] = self.cstask_id
-            resp = self.session.post(self.query_url, data=params, timeout=5)
-            return self._extract_courses(resp)
-        except Exception:
-            return []
+        return self._parse_courses_from_html(self.page_html, keyword)
 
-    def _extract_courses(self, resp):
+    def _parse_courses_from_html(self, html, keyword):
         courses = []
-        data = None
-        try:
-            data = resp.json()
-        except Exception:
-            text = resp.text
-            m = re.search(r'\[.*\]', text, re.S)
-            if m:
-                try:
-                    data = json.loads(m.group())
-                except Exception:
-                    return []
-        if isinstance(data, list):
-            for item in data:
-                if isinstance(item, dict):
-                    courses.append(self._parse_course(item))
+        trs = re.findall(r'<tr class="item"[^>]*>.*?</tr>', html, re.S)
+        for tr in trs:
+            tds = re.findall(r'<td[^>]*>(.*?)</td>', tr, re.S)
+            if len(tds) < 7:
+                continue
+            name = tds[1].strip()
+            if keyword and keyword not in name:
+                continue
+            sn = re.sub(r'<[^>]+>', '', tds[2]).strip()
+            assign = re.sub(r'<[^>]+>', '', tds[3]).strip()
+            credit = tds[4].strip()
+            capacity = tds[5].strip()
+            selected = tds[6].strip()
+            cap = int(capacity) if capacity.isdigit() else 0
+            sel = int(selected) if selected.isdigit() else 0
+            dcid_m = re.search(r'Selecting\(this,"(\d+)"', tr)
+            luid_m = re.search(r"luid='(\d+)'", tr)
+            dcid = dcid_m.group(1) if dcid_m else ''
+            luid = luid_m.group(1) if luid_m else ''
+            courses.append({
+                'name': name, 'sn': sn, 'assign': assign,
+                'credit': credit, 'capacity': cap, 'remaining': cap - sel,
+                'dcid': dcid, 'course_id': luid, 'raw': {}
+            })
         return courses
-
-    def _parse_course(self, item):
-        name = item.get('courseName', '')
-        dcid = item.get('dcId', '')
-        course_id = item.get('courseId', '')
-        credit = item.get('credit', 0)
-        capacity = int(item.get('capacity', 0) or 0)
-        remaining = int(item.get('remaining', 0) or 0)
-        surplus = capacity - remaining
-        sn = item.get('sn', '')
-        assign = item.get('assign', '')
-        return {
-            'name': name, 'dcid': dcid, 'course_id': course_id,
-            'credit': credit, 'capacity': capacity, 'remaining': surplus,
-            'sn': sn, 'assign': assign, 'raw': item
-        }
 
     def submit_select(self, course):
         if not self.select_url:
