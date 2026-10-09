@@ -264,7 +264,7 @@ class GrabCore:
             pass
         return False, text[:100]
 
-    def run(self, open_time, advance_seconds, class_name, stop_check):
+    def run(self, open_time, advance_seconds, class_name, target_courses, stop_check):
         self.log('=== 抢课脚本启动 ===')
 
         self.log('正在校准服务器时间...')
@@ -317,24 +317,28 @@ class GrabCore:
             if self.select_url:
                 self.log(f'  选课接口: {self.select_url}')
 
-        self.log(f'>>> 拉取 [{class_name}] 可选课程...')
-        courses = self.find_courses_for_class(class_name)
-        if not courses:
-            self.log('⚠ 未找到可选课程，将持续尝试...')
-            for _ in range(10):
-                if stop_check():
-                    return False
-                time.sleep(1)
-                courses = self.find_courses_for_class(class_name)
-                if courses:
-                    break
-        if not courses:
-            self.log('✗ 仍未找到可选课程，退出')
-            return False
+        if target_courses:
+            self.target_courses = target_courses
+            self.log(f'✓ 使用已选 {len(target_courses)} 个教学班:')
+        else:
+            self.log(f'>>> 拉取 [{class_name}] 可选课程...')
+            courses = self.find_courses_for_class(class_name)
+            if not courses:
+                self.log('⚠ 未找到可选课程，将持续尝试...')
+                for _ in range(10):
+                    if stop_check():
+                        return False
+                    time.sleep(1)
+                    courses = self.find_courses_for_class(class_name)
+                    if courses:
+                        break
+            if not courses:
+                self.log('✗ 仍未找到可选课程，退出')
+                return False
+            self.target_courses = courses
+            self.log(f'✓ 拉取到 {len(courses)} 个教学班:')
 
-        self.target_courses = courses
-        self.log(f'✓ 找到 {len(courses)} 个教学班:')
-        for c in courses:
+        for c in self.target_courses:
             tag = '✓' if c['remaining'] > 0 else '✗'
             self.log(f'  {tag} {c["name"]} 班号{c["sn"]} 余量{c["remaining"]}/{c["capacity"]}')
 
